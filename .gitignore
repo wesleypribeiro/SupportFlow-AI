@@ -1,0 +1,27 @@
+# Dependências e caches locais
+node_modules/
+.npm/
+.eslintcache
+
+# Artefatos de build e testes
+dist/
+.next/
+apps/web/next-env.d.ts
+coverage/
+*.tsbuildinfo
+*.log
+
+# Configuração de ambiente e segredos
+.env
+.env.*
+!.env.example
+
+# Arquivos temporários de sistema e editor
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Diretórios locais
+.agents/
+openspec/

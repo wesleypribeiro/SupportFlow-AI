@@ -1,0 +1,33 @@
+{
+  "name": "supportflow-ai",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/contracts",
+    "apps/api",
+    "apps/web"
+  ],
+  "engines": {
+    "node": ">=24 <25",
+    "npm": ">=11 <12"
+  },
+  "scripts": {
+    "dev": "concurrently --kill-others --names api,web \"npm run dev --workspace @supportflow/api\" \"npm run dev --workspace @supportflow/web\"",
+    "dev:api": "npm run dev --workspace @supportflow/api",
+    "dev:web": "npm run dev --workspace @supportflow/web",
+    "test": "vitest run",
+    "typecheck": "npm run typecheck --workspaces",
+    "lint": "eslint apps/api packages/contracts vitest.config.ts && npm run lint --workspace @supportflow/web",
+    "build": "npm run build --workspaces"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "@types/node": "^24.13.6",
+    "concurrently": "^10.0.5",
+    "eslint": "^9.39.5",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.70.1",
+    "vitest": "^5.0.1"
+  }
+}
