@@ -24,7 +24,7 @@ function parseDefinition(input: unknown) {
 
 export type LanguageSchoolAction = ReturnType<typeof parseDefinition>;
 
-// Nenhuma escrita conectada nesta etapa; somente contratos e composição do lifecycle.
+// Contratos e composição do lifecycle; execução de negócio é injetada separadamente.
 export function createLanguageSchoolPendingActions() {
   return new InMemoryPendingActions(parseDefinition, (receipt) => receiptSchema.parse(receipt));
 }

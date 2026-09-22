@@ -383,17 +383,17 @@ describe('confirmação vinculada e serializada pelo backend', () => {
     expect(app.conversations.get(current.id)).toEqual(current);
   });
 
-  it('permanece inicializável sem executor e sanitiza tentativa de confirmação', async () => {
+  it('inicializa e confirma o primeiro cadastro sem credenciais de LLM', async () => {
     const app = createApplication({});
     servers.push(app.server);
     const current = conversation(app);
     const action = await app.prepareAction(current.id, proposal());
     expect((await app.server.inject('/health')).statusCode).toBe(200);
     const response = await confirm(app.server, current.id, action.actionId);
-    expect(response.statusCode).toBe(500);
-    expect(response.json()).toEqual({ error: {
-      code: 'CHAT_ERROR', message: 'Não foi possível concluir o atendimento. Tente novamente.',
-    } });
-    expect(response.body).not.toContain('Executor');
+    expect(response.statusCode).toBe(200);
+    expect(response.json().results[0]).toMatchObject({
+      tool: 'create_lead', result: { ok: true, data: { outcome: 'created', lead: proposal().preview } },
+    });
+    expect(app.conversations.get(current.id)?.context.leadId).toBe(response.json().results[0].result.data.lead.id);
   });
 });

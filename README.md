@@ -2,11 +2,11 @@
 
 Fundação do MVP para escolas de idiomas, seguindo exclusivamente
 [`language-school-sales-mvp`](openspec/changes/language-school-sales-mvp/proposal.md).
-As tasks 1.1 a 4.1 entregam a fundação, os contratos públicos, o catálogo escolar
+As tasks 1.1 a 4.2 entregam a fundação, os contratos públicos, o catálogo escolar
 e a API de chat com histórico e contexto vigente em memória, além de três tools
 via LangChain, a interface de chat, a política de consultas por turno e a infraestrutura
-de ações pendentes com confirmação por IDs.
-Cadastro e agendamento ficam para as próximas tasks.
+de ações pendentes com confirmação por IDs e o primeiro cadastro de lead confirmado.
+A integração do cadastro ao agente/UI e o agendamento ficam para as próximas tasks.
 
 ## Executar localmente
 
@@ -132,10 +132,9 @@ Esses registros desaparecem ao reiniciar o processo.
 `createApplication` oferece `prepareAction(conversationId, { kind, preview })`
 somente para composição interna, passando pela mesma fila das rotas, e aceita
 `executeAction` como dependência opcional. O executor recebe uma cópia da ação
-armazenada, inclusive seus argumentos e vínculo. Não há executor de negócio
-instalado em produção nesta task; nenhum lead ou reserva é gravado. Os testes
-injetam um executor determinístico compatível com os schemas públicos. As regras
-de cadastro/reserva e sua conexão às tools pertencem às próximas tasks.
+armazenada, inclusive seus argumentos e vínculo. O executor padrão agora cria
+somente o primeiro lead da conversa. Reserva continua sem executor. A suíte da
+infraestrutura também injeta executores simulados compatíveis com os contratos.
 
 O recibo validado (`reply` e `results`) é salvo antes de construir/enviar a resposta
 HTTP. Uma repetição verifica o vínculo e devolve esse snapshot antes de avaliar a
@@ -143,6 +142,27 @@ revisão atual, sem chamar novamente o executor, inclusive após falha de envio 
 mudança de contexto. O envelope continua mostrando a prévia **atualmente** pendente,
 quando existir outra; o recibo original não muda. Falha técnica antes de registrar
 um recibo válido retorna `500/CHAT_ERROR`. Não há botão de confirmação na UI ainda.
+
+O backend oferece `prepareLead(conversationId, input)` para exercitar diretamente
+`create_lead`, dentro da fila da conversa. O retorno separa `result` de `pendingAction`.
+Esse método não é uma rota HTTP nem uma ferramenta registrada no modelo. Entrada
+estrita válida deve corresponder exatamente a nome, contato (`type` e `value`),
+curso e objetivo do contexto atual. O curso também deve continuar ativo no
+`SchoolRepository`. Preparar retorna `CONFIRMATION_REQUIRED` sem gravar lead.
+
+Na confirmação, o executor usa os argumentos armazenados, revalida contexto e
+catálogo, grava no `InMemoryLeadRepository` e retorna `outcome: created` com o
+registro salvo. O ID gerado pelo repository é associado a `context.leadId` dentro
+da mesma fila, sem alterar a revisão ou o histórico. Falha técnica anterior à
+gravação retorna `CHAT_ERROR`, não consome um recibo e permite repetir a confirmação.
+Falhas de validação/referência retornam resultado estruturado de erro; não criam lead.
+
+O repository oferece consulta e criação por conversa, com cópias defensivas e
+recusa de uma segunda criação. Não há deduplicação por contato entre conversas.
+Nesta task, encontrar lead existente retorna `OPERATION_FAILED` sem substituí-lo:
+a política `existing`/`updated` e a operação de atualização por conversa serão
+completadas na 4.3. As três consultas de catálogo continuam sendo as únicas tools
+vinculadas ao LangChain; o prompt e a UI permanecem sem integração de cadastro.
 
 Os testes usam barreiras de promises para comprovar a ordem correção → confirmação,
 a execução única em confirmações concorrentes, a independência entre conversas e
@@ -187,8 +207,9 @@ exclusão de campos. Paráfrases que não aparecem na mensagem atual são rejeit
 Curso é associado por ID exato, nome ou idioma sem diferenciar maiúsculas/minúsculas,
 desde que a referência identifique uma única opção ativa no catálogo consultado pelo
 `SchoolRepository`. Referência inventada, inativa, ausente ou ambígua mantém o curso
-anterior. Não há resolução semântica avançada de cursos. `slotId` e `leadId` continuam
-`null`: o patch não pode criar horários, leads ou alterar a revisão diretamente.
+anterior. Não há resolução semântica avançada de cursos. `slotId` continua `null`;
+`leadId` começa `null` e só recebe o ID salvo após confirmação de cadastro. O patch
+da LLM não pode criar horários, leads ou alterar a revisão diretamente.
 
 A validação limita a origem e o formato dos valores; a interpretação de intenção
 continua probabilística. O contexto não contém preços, disponibilidade ou fatos da

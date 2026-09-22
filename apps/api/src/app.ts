@@ -1,6 +1,6 @@
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import { ChatOpenAI } from '@langchain/openai';
-import { languageSchoolChatResponseSchema } from '@supportflow/contracts/language-school';
+import { createLeadResultSchema, languageSchoolChatResponseSchema } from '@supportflow/contracts/language-school';
 import { registerChatRoute } from './core/chat-route.js';
 import { createChatRunner } from './core/chat.js';
 import { loadCoreConfig } from './core/config.js';
@@ -17,11 +17,19 @@ import { createContextUpdater, describeConversationContext } from './modules/lan
 import { languageSchoolInstructions } from './modules/language-school/prompt.js';
 import { createLanguageSchoolPendingActions } from './modules/language-school/infrastructure/pending-actions.js';
 import type { LanguageSchoolAction } from './modules/language-school/infrastructure/pending-actions.js';
+import type { LeadRepository } from './modules/language-school/domain/lead-repository.js';
+import type { SchoolRepository } from './modules/language-school/domain/school-repository.js';
+import { InMemoryLeadRepository } from './modules/language-school/infrastructure/in-memory-lead-repository.js';
+import { createLeadTool } from './modules/language-school/infrastructure/lead-tool.js';
+import { createLeadConfirmationExecutor } from './modules/language-school/infrastructure/lead-confirmation.js';
+import { leadFailure } from './modules/language-school/application/create-lead.js';
 
 // Composição explícita: o core não importa nem escolhe o segmento da aplicação.
 export function createApplication(environment: NodeJS.ProcessEnv, options: {
   model?: BaseChatModel;
   executeAction?: ActionExecutor<LanguageSchoolAction>;
+  schoolRepository?: SchoolRepository;
+  leadRepository?: LeadRepository;
 } = {}) {
   const config = {
     ...loadCoreConfig(environment),
@@ -32,7 +40,8 @@ export function createApplication(environment: NodeJS.ProcessEnv, options: {
     throw new Error('SCHOOL_ID não corresponde à escola cadastrada nesta demonstração.');
   }
 
-  const schoolRepository = new InMemorySchoolRepository(schoolFixture, courseFixtures);
+  const schoolRepository = options.schoolRepository ?? new InMemorySchoolRepository(schoolFixture, courseFixtures);
+  const leadRepository = options.leadRepository ?? new InMemoryLeadRepository();
   const catalogTools = createCatalogTools(schoolRepository);
   const langChainCatalog = createLangChainCatalogTools(catalogTools);
   const model = options.model ?? (config.llm
@@ -41,10 +50,16 @@ export function createApplication(environment: NodeJS.ProcessEnv, options: {
   const server = createServer();
   const conversations = new InMemoryConversations(createConversationContext);
   const actions = createLanguageSchoolPendingActions();
+  const createLead = createLeadTool({
+    schoolRepository, leadRepository,
+    prepareAction: (scope, preview) => {
+      actions.prepare(scope.conversationId, scope.context.revision, { kind: 'create_lead', preview });
+    },
+  });
   registerChatRoute(server, {
     conversations,
     actions,
-    ...(options.executeAction ? { executeAction: options.executeAction } : {}),
+    executeAction: options.executeAction ?? createLeadConfirmationExecutor({ schoolRepository, leadRepository, conversations }),
     runTurn: createChatRunner({
       model,
       instructions: languageSchoolInstructions,
@@ -63,5 +78,13 @@ export function createApplication(environment: NodeJS.ProcessEnv, options: {
     return actions.prepare(conversationId, conversation.context.revision, proposal);
   });
 
-  return { server, config, catalogTools, conversations, prepareAction };
+  // Exercício direto da tool nesta etapa. Nenhum registro no LangChain ou nova rota.
+  const prepareLead = (conversationId: string, input: unknown) => conversations.runExclusive(conversationId, async () => {
+    const conversation = conversations.get(conversationId);
+    if (!conversation) return { result: createLeadResultSchema.parse(leadFailure('NOT_FOUND')), pendingAction: null };
+    const result = await createLead(input, { conversationId, context: conversation.context });
+    return { result, pendingAction: actions.pending(conversationId, conversation.context.revision) };
+  });
+
+  return { server, config, catalogTools, conversations, prepareAction, prepareLead };
 }

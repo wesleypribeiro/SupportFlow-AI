@@ -2,7 +2,8 @@
 
 Catálogo de leitura das tasks 2.2 e 2.3 de `language-school-sales-mvp`, conectado
 ao chat na task 3.1, com contexto vigente na task 3.2 e política de atendimento
-consolidada na task 3.4. Usa integralmente os contratos aprovados na task 2.1.
+consolidada na task 3.4. A task 4.2 acrescenta a preparação de cadastro e a criação
+do primeiro lead por confirmação. Usa os contratos aprovados na task 2.1.
 
 ## Organização
 
@@ -51,7 +52,8 @@ Referências de curso precisam de correspondência única entre as opções ativ
 mencionadas; uma ambiguidade mantém a seleção anterior. Comparações de nome/idioma
 ignoram caixa, sem reescrever os registros. A revisão aumenta uma vez quando algum
 campo relevante muda, e permanece
-igual para valores idênticos. Nenhum lead ou horário é criado nesta etapa.
+igual para valores idênticos. O patch não cria lead ou horário; somente o executor
+de cadastro confirmado pode associar o ID salvo a `leadId`, sem aumentar a revisão.
 
 O contexto validado chega à seleção das tools em uma `SystemMessage` separada.
 As respostas do assistente não alimentam a interpretação de dados pessoais. O core
@@ -80,7 +82,7 @@ Textos de escola, cursos e erros permanecem no conteúdo estruturado de mensagen
 com papel `tool`; não se tornam mensagens de sistema nem modificam as ferramentas
 disponíveis. A prosa não altera `results`, cria recibos ou autoriza operações.
 O prompt proíbe afirmar cadastro, agendamento, reserva ou transferência concluídos
-nesta etapa, que oferece somente leitura de catálogo.
+nesta etapa do agente, que ainda recebe somente as tools de leitura de catálogo.
 
 `chat-policy.test.ts` usa `ScriptedChatModel`, os adapters reais e `server.inject()`:
 verifica objetivo sem consulta, catálogo seguido de detalhes por ID oficial,
@@ -154,3 +156,57 @@ correspondente antes de sair da tool.
 Os testes usam o repositório em memória. Doubles e spies ficam restritos aos
 cenários de falha, implementação incompatível e ausência de consulta após entrada
 inválida. A suíte não chama rede ou modelos de linguagem.
+
+## Primeiro cadastro de lead — task 4.2
+
+`domain/lead-repository.ts` define somente:
+
+| Método | Retorno |
+| --- | --- |
+| `findByConversationId(conversationId)` | `Promise<Lead \| null>` da própria conversa |
+| `createForConversation(conversationId, input)` | `Promise<Lead \| null>`; null se já existe lead, sem substituí-lo |
+
+`InMemoryLeadRepository` usa um Map por conversa e gera o ID no backend. Valida o
+registro inteiro antes de escrever, sem intercalar awaits na verificação/criação.
+Entrada e retornos são copiados defensivamente. Contatos iguais em conversas
+diferentes geram leads distintos. A atualização por conversa será acrescentada
+com a política da task 4.3; não há upsert, CRM ou busca global antecipados.
+
+`application/create-lead.ts` separa duas operações determinísticas. A preparação
+valida os campos obrigatórios do contexto e compara nome, contato, curso e objetivo
+com o input, sem normalização. Consulta o curso ativo através da operação de catálogo
+e verifica se a conversa já tem lead. Retorna uma prévia formada dos dados oficiais
+do contexto. `createFirstLead` repete essas verificações antes da criação e retorna
+`created` exclusivamente com o registro salvo.
+
+`infrastructure/lead-tool.ts` valida entrada/saída com os schemas existentes e
+encaminha a prévia à infraestrutura da 4.1. Retorna somente `CONFIRMATION_REQUIRED`,
+sem gravar. Na composição, `prepareLead(conversationId, input)` obtém o contexto
+atual dentro da fila e retorna `{ result, pendingAction }`. O `conversationId` é
+um parâmetro separado do backend, nunca campo da entrada pública da tool.
+
+`infrastructure/lead-confirmation.ts` é o executor padrão para `create_lead`.
+Após vínculo e revisão serem verificados pelo core, usa os argumentos capturados,
+revalida o contexto/catálogo e cria o primeiro lead. Associa o ID salvo a `leadId`,
+sem incrementar revisão, dentro da mesma serialização. A infraestrutura conserva
+o recibo antes do envio HTTP. Uma confirmação repetida devolve o snapshot anterior,
+inclusive depois de corrigir o contexto; não modifica o lead já salvo.
+
+Mapeamento da preparação: entrada ou contexto incompletos/divergentes →
+`INVALID_INPUT`; curso ausente/inativo → `NOT_FOUND`; prévia preparada →
+`CONFIRMATION_REQUIRED`; exceção/saída interna incompatível → `OPERATION_FAILED`.
+Conversa já cadastrada também retorna `OPERATION_FAILED` com mensagem própria,
+sem aplicar `existing`/`updated`. Falhas esperadas na confirmação ficam no resultado
+estruturado `create_lead` com HTTP 200, sem sucesso de negócio; falhas técnicas
+anteriores à escrita seguem `500/CHAT_ERROR` e mantêm a ação disponível para retry.
+As respostas não expõem detalhes internos. Apenas resultados concluídos são
+conservados pela infraestrutura de recibos.
+
+O caso de uso não conhece LangChain, Fastify ou implementações de repositório.
+O core não conhece lead. Nenhuma tool de cadastro foi vinculada ao modelo, nenhuma
+rota de preparação foi criada e o prompt/UI não mudaram. A integração é da 4.4.
+
+Os testes do repository, da tool e de confirmação verificam proposta sem escrita,
+contexto como autoridade, revisão, cópias defensivas, isolamento, revalidação do
+curso, falhas sem registro parcial e retry sem segundo cadastro. Todos são locais;
+as confirmações usam `server.inject()` e não consultam uma LLM.
