@@ -2,9 +2,10 @@
 
 Fundação do MVP para escolas de idiomas, seguindo exclusivamente
 [`language-school-sales-mvp`](openspec/changes/language-school-sales-mvp/proposal.md).
-As tasks 1.1 a 3.3 entregam a fundação, os contratos públicos, o catálogo escolar
+As tasks 1.1 a 3.4 entregam a fundação, os contratos públicos, o catálogo escolar
 e a API de chat com histórico e contexto vigente em memória, além de três tools
-via LangChain e a interface de chat. Cadastro e agendamento ficam para as próximas tasks.
+via LangChain, a interface de chat e a política de consultas por turno.
+Cadastro e agendamento ficam para as próximas tasks.
 
 ## Executar localmente
 

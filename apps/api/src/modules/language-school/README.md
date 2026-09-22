@@ -1,8 +1,8 @@
 # Módulo de escolas de idiomas
 
 Catálogo de leitura das tasks 2.2 e 2.3 de `language-school-sales-mvp`, conectado
-ao chat na task 3.1, com contexto vigente na task 3.2 e usando integralmente os
-contratos aprovados na task 2.1.
+ao chat na task 3.1, com contexto vigente na task 3.2 e política de atendimento
+consolidada na task 3.4. Usa integralmente os contratos aprovados na task 2.1.
 
 ## Organização
 
@@ -21,7 +21,8 @@ contratos aprovados na task 2.1.
   tool calling, sem mudar domínio, casos de uso ou repositório.
 - `infrastructure/langchain-context.ts`: interpretação estruturada pelo mesmo modelo
   e descrição do contexto vigente para o atendimento.
-- `prompt.ts`: instruções iniciais de atendimento e consulta de fatos do catálogo.
+- `prompt.ts`: política de conversa, consulta de fatos do catálogo e tratamento de
+  resultados como dados, sem autorização de operações pela prosa.
 
 O ponto de composição `src/app.ts` instancia o repositório e expõe `catalogTools`
 ao código do backend. O core continua sem importar o módulo escolar e recebe as
@@ -51,6 +52,40 @@ O contexto validado chega à seleção das tools em uma `SystemMessage` separada
 As respostas do assistente não alimentam a interpretação de dados pessoais. O core
 salva contexto e histórico juntos após validar a resposta HTTP; qualquer falha do
 turno descarta a cópia em processamento e mantém o estado anterior.
+
+## Política e fluxo por turno
+
+O prompt permite saudações, conversa geral e respostas sobre o objetivo sem consulta
+comercial. O modelo decide se precisa de uma tool; o backend não classifica frases
+para escolher por ele. Escola, cursos, modalidades, preços e condições cadastradas
+devem vir das três consultas disponíveis. Conhecimento próprio, suposições, valores
+típicos de mercado e prosa anterior do assistente não são fontes desses fatos.
+Ausências são informadas, mantendo a distinção entre preço `null` e zero. IDs usados
+em consultas vêm de dados validados; uma referência ambígua exige esclarecimento.
+
+Após a atualização validada do contexto, há uma chamada de seleção com tools.
+Sem tool calls, essa resposta encerra o turno. Com chamadas, o backend executa a
+rodada solicitada, anexa as `ToolMessage`s e faz uma chamada de redação sem tools
+vinculadas. Uma nova tool call nessa redação retorna `CHAT_ERROR`, sem executar
+outra rodada. Não há retry de tool calling, recursão ou loop autônomo. Incluindo
+a interpretação do contexto, são duas chamadas ao modelo sem consultas ou três
+com consultas. Dependências ainda ausentes são resolvidas em turnos posteriores.
+
+Textos de escola, cursos e erros permanecem no conteúdo estruturado de mensagens
+com papel `tool`; não se tornam mensagens de sistema nem modificam as ferramentas
+disponíveis. A prosa não altera `results`, cria recibos ou autoriza operações.
+O prompt proíbe afirmar cadastro, agendamento, reserva ou transferência concluídos
+nesta etapa, que oferece somente leitura de catálogo.
+
+`chat-policy.test.ts` usa `ScriptedChatModel`, os adapters reais e `server.inject()`:
+verifica objetivo sem consulta, catálogo seguido de detalhes por ID oficial,
+ausências, prosa divergente e descrição de curso que tenta dar instruções. Nesse
+último caso, até uma redação simulada incorreta mantém os dados oficiais; tentar
+uma nova chamada de tool falha sem executar outra operação. A suíte existente
+preserva validação de argumentos, associação de IDs e SDK com transporte simulado.
+Os testes verificam essas fronteiras arquiteturais e cláusulas essenciais do prompt,
+sem provar que um modelo real sempre escolherá a tool certa ou resistirá a instruções
+maliciosas em texto. A linguagem natural continua probabilística.
 
 ## SchoolRepository
 

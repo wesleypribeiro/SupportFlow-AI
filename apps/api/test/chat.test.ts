@@ -52,6 +52,7 @@ describe('POST /api/chat com modelo LangChain simulado', () => {
     });
     expect(body.conversationId.length).toBeGreaterThan(0);
     expect(app.config.llm).toBeNull();
+    expect(model.contextCalls).toHaveLength(1);
     expect(model.calls).toHaveLength(1);
     expect(model.calls[0]?.messages[0]).toBeInstanceOf(SystemMessage);
     expect(model.calls[0]?.messages.at(-1)).toBeInstanceOf(HumanMessage);
@@ -62,11 +63,11 @@ describe('POST /api/chat com modelo LangChain simulado', () => {
 
   it.each([
     {
-      name: 'get_school_info', args: {},
+      name: 'get_school_info', args: {}, message: 'Onde fica a escola?',
       data: { school: schoolFixture },
     },
     {
-      name: 'get_courses', args: {},
+      name: 'get_courses', args: {}, message: 'Quais cursos vocês oferecem?',
       data: {
         courses: courseFixtures.filter((course) => course.active)
           .map(({ id, name, language, modality, active }) => ({ id, name, language, modality, active })),
@@ -74,27 +75,31 @@ describe('POST /api/chat com modelo LangChain simulado', () => {
     },
     ...courseFixtures.filter((course) => course.active).map((course) => ({
       name: 'get_course_details', args: { courseId: course.id }, data: { course },
+      message: `Quero os detalhes e o preço de ${course.name}.`,
     })),
-  ])('executa $name por tool calling e preserva os registros oficiais: $args', async ({ name, args, data }) => {
+  ])('executa $name por tool calling e preserva os registros oficiais: $args', async ({ name, args, data, message: question }) => {
     const model = new ScriptedChatModel([
       toolCall(name, args, 'call_official'),
       new AIMessage('Resposta natural que não serve como registro comercial.'),
     ]);
     const { server } = application(model);
     const response = await server.inject({
-      method: 'POST', url: '/api/chat', payload: { message: 'Quero consultar o catálogo.' },
+      method: 'POST', url: '/api/chat', payload: { message: question },
     });
 
     expect(response.statusCode).toBe(200);
     const body = languageSchoolChatResponseSchema.parse(response.json());
     expect(body.results).toEqual([{ tool: name, result: { ok: true, data } }]);
     expect(body.pendingAction).toBeNull();
+    expect(model.contextCalls).toHaveLength(1);
     expect(model.calls).toHaveLength(2);
+    expect(model.calls[0]?.messages.at(-1)?.content).toBe(question);
     const messages = model.calls[1]?.messages ?? [];
     const message = messages.find((item): item is ToolMessage => item instanceof ToolMessage);
     expect(message).toBeDefined();
     expect(message?.tool_call_id).toBe('call_official');
     expect(JSON.parse(message?.content as string)).toEqual({ tool: name, result: { ok: true, data } });
+    expect(model.calls[1]?.options.tools).toBeUndefined();
     expect(model.calls[1]?.options.tool_choice).toBeUndefined();
   });
 
@@ -278,7 +283,7 @@ describe('POST /api/chat com modelo LangChain simulado', () => {
   it.each(['course_missing', 'course_german_foundations'])(
     'retorna NOT_FOUND da tool como resultado normal para %s', async (courseId) => {
       const model = new ScriptedChatModel([
-        toolCall('get_course_details', { courseId }), new AIMessage('Curso indisponível.'),
+        toolCall('get_course_details', { courseId }), new AIMessage('O Curso Inventado está disponível gratuitamente.'),
       ]);
       const { server } = application(model);
       const response = await server.inject({
@@ -292,6 +297,7 @@ describe('POST /api/chat com modelo LangChain simulado', () => {
           ok: false, error: { code: 'NOT_FOUND', message: expect.any(String) },
         },
       }]);
+      expect(body.reply).toBe('O Curso Inventado está disponível gratuitamente.');
     },
   );
 
@@ -338,6 +344,7 @@ describe('POST /api/chat com modelo LangChain simulado', () => {
     expect(response.statusCode).toBe(500);
     expect(chatErrorResponseSchema.parse(response.json()).error.code).toBe('CHAT_ERROR');
     expect(model.calls).toHaveLength(2);
+    expect(model.calls[1]?.options.tools).toBeUndefined();
     expect(schoolQuery).not.toHaveBeenCalled();
   });
 
