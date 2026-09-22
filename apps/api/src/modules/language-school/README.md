@@ -1,7 +1,7 @@
 # Módulo de escolas de idiomas
 
-Catálogo de leitura das tasks 2.2 e 2.3 de `language-school-sales-mvp`, usando
-integralmente os contratos aprovados na task 2.1.
+Catálogo de leitura das tasks 2.2 e 2.3 de `language-school-sales-mvp`, conectado
+ao chat na task 3.1 e usando integralmente os contratos aprovados na task 2.1.
 
 ## Organização
 
@@ -12,10 +12,20 @@ integralmente os contratos aprovados na task 2.1.
 - `infrastructure/in-memory-school-repository.ts`: armazenamento local de leitura.
 - `infrastructure/catalog-tools.ts`: três funções com validação de entrada/saída e
   conversão de falhas para resultados públicos.
+- `infrastructure/langchain-catalog-tools.ts`: adaptação das três consultas para
+  tool calling, sem mudar domínio, casos de uso ou repositório.
+- `prompt.ts`: instruções iniciais de atendimento e consulta de fatos do catálogo.
 
 O ponto de composição `src/app.ts` instancia o repositório e expõe `catalogTools`
-ao código do backend. O core continua sem importar o módulo escolar. Nenhuma
-tool está conectada a LangChain ou exposta por rota HTTP nesta etapa.
+ao código do backend. O core continua sem importar o módulo escolar e recebe as
+tools, instruções e validação da resposta pública pela composição.
+
+O adapter LangChain usa os mesmos schemas de entrada e delega a `catalogTools`.
+O resultado validado vai em JSON no conteúdo da `ToolMessage` e como objeto no
+`artifact`; `tool_call_id` mantém a associação padrão da chamada. Uma cópia validada
+do objeto também compõe `results` de `/api/chat`, independentemente da prosa do modelo.
+Argumentos rejeitados pelo LangChain são convertidos em `INVALID_INPUT` sanitizado;
+`NOT_FOUND` é um resultado normal. Falhas técnicas interrompem o turno com `CHAT_ERROR`.
 
 ## SchoolRepository
 

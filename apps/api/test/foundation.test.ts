@@ -47,14 +47,17 @@ describe('fundação do backend', () => {
     expect(response.json()).toEqual({ status: 'ok' });
   });
 
-  it('compõe as consultas da escola configurada sem adicionar rotas de chat', async () => {
+  it('compõe as consultas da escola e controla a falha de chat sem modelo configurado', async () => {
     const app = createApplication({ SCHOOL_ID: 'school_demo' });
     server = app.server;
 
     const result = await app.catalogTools.get_school_info({});
     expect(result).toMatchObject({ ok: true, data: { school: { id: 'school_demo' } } });
     const response = await server.inject({ method: 'POST', url: '/api/chat', payload: { message: 'Olá' } });
-    expect(response.statusCode).toBe(404);
+    expect(response.statusCode).toBe(500);
+    expect(response.json()).toEqual({
+      error: { code: 'CHAT_ERROR', message: 'Não foi possível concluir o atendimento. Tente novamente.' },
+    });
   });
 
   it('recusa uma escola não cadastrada sem renomear a fixture', () => {
