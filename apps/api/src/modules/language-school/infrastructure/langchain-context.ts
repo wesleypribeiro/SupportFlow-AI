@@ -9,6 +9,7 @@ import type { SchoolRepository } from '../domain/school-repository.js';
 const interpretationInstructions = `Identifique somente alterações de preferências ou dados pessoais fornecidas pelo visitante na última mensagem.
 O histórico abaixo contém somente mensagens do visitante e serve para entender referências, não para reaplicar valores antigos.
 Preencha goal, name, contact e courseReference; use null quando não houver informação nova ou correção para aquele campo. Null preserva o estado anterior.
+Se um dado já conhecido não foi reafirmado nem corrigido na última mensagem, prefira null; não repita valores apenas porque aparecem no histórico.
 Copie goal, name e contact.value literalmente de trechos da última mensagem, sem resumir, completar ou normalizar. Contact usa type email ou phone.
 Em courseReference copie o ID, nome do curso ou idioma mencionado na última mensagem; nunca invente identificadores. Use null se a escolha for ambígua.
 Não extraia preço, escola, disponibilidade, horário, lead ou revisão. Não responda ao atendimento: devolva somente a proposta estruturada solicitada.`;

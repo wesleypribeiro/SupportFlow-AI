@@ -25,3 +25,4 @@ Thumbs.db
 # Diretórios locais
 .agents/
 openspec/
+*.zip

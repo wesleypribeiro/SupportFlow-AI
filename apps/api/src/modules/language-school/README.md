@@ -41,11 +41,16 @@ composição, sem conhecer regras de aluno ou curso. `ConversationContext` mant�
 propõe somente `goal`, `name`, `contact` e `courseReference`, com `null` significando
 preservar. O patch usa schemas internos, sem ampliar contratos públicos.
 
-`applyContextPatch` valida a proposta inteira antes de aplicar mudanças. Dados
-pessoais e objetivo exigem trechos literais da mensagem atual. Referências de curso
-precisam de correspondência única entre as opções ativas mencionadas; uma ambiguidade
-mantém a seleção anterior. Comparações de nome/idioma ignoram caixa, sem reescrever os
-registros. A revisão aumenta uma vez quando algum campo relevante muda, e permanece
+`applyContextPatch` valida a proposta inteira antes de aplicar mudanças. Alterações
+de dados pessoais e objetivo exigem trechos literais da mensagem atual. Repetir
+exatamente o objetivo ou nome vigente, ou contato com o mesmo `type` e `value`, é
+no-op sem exigir nova menção nem aumentar a revisão. Não há normalização adicional.
+Valores já substituídos não recebem essa exceção. Um patch misto inválido continua
+sendo rejeitado inteiro, sem salvar os demais campos ou o histórico do turno.
+Referências de curso precisam de correspondência única entre as opções ativas
+mencionadas; uma ambiguidade mantém a seleção anterior. Comparações de nome/idioma
+ignoram caixa, sem reescrever os registros. A revisão aumenta uma vez quando algum
+campo relevante muda, e permanece
 igual para valores idênticos. Nenhum lead ou horário é criado nesta etapa.
 
 O contexto validado chega à seleção das tools em uma `SystemMessage` separada.

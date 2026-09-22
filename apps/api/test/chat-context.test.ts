@@ -123,6 +123,87 @@ describe('contexto atual do chat escolar', () => {
     });
   });
 
+  it('retorna 200 ao repetir objetivo e nome vigentes depois de "Pode continuar?", sem nova revisão', async () => {
+    const provided = { ...unchanged, goal: 'viagem', name: 'Ana' };
+    const model = new ScriptedChatModel([
+      new AIMessage('Entendi, Ana.'), new AIMessage('Podemos continuar.'),
+      new AIMessage('Qual idioma deseja aprender?'),
+    ], { contextSteps: [provided, { ...provided }, unchanged] });
+    const { server } = application(model);
+    const initialMessage = 'Meu nome é Ana. Quero estudar para viagem.';
+    const initial = await post(server, initialMessage);
+    const { conversationId } = languageSchoolChatResponseSchema.parse(initial.json());
+    const repeated = await post(server, 'Pode continuar?', conversationId);
+    const next = await post(server, 'Sim.', conversationId);
+
+    expect(repeated.statusCode).toBe(200);
+    expect(languageSchoolChatResponseSchema.parse(repeated.json())).toMatchObject({
+      conversationId, reply: 'Podemos continuar.', results: [], pendingAction: null,
+    });
+    expect(next.statusCode).toBe(200);
+    expect(contextAt(model, 0)).toMatchObject({ goal: 'viagem', name: 'Ana', revision: 1 });
+    expect(contextAt(model, 1)).toEqual(contextAt(model, 0));
+    expect(contextAt(model, 2)).toEqual(contextAt(model, 0));
+    expect(visitorHistoryAt(model, 2)).toEqual([initialMessage, 'Pode continuar?', 'Sim.']);
+    expect(model.calls[2]?.messages.filter((message) => message.type !== 'system').map((message) => message.content))
+      .toEqual([initialMessage, 'Entendi, Ana.', 'Pode continuar?', 'Podemos continuar.', 'Sim.']);
+  });
+
+  it('aceita objetivo repetido junto de nome novo e persiste somente uma nova revisão', async () => {
+    const model = new ScriptedChatModel([
+      new AIMessage('Entendi o objetivo.'), new AIMessage('Entendi, Ana.'), new AIMessage('Vamos continuar.'),
+    ], { contextSteps: [
+      { ...unchanged, goal: 'viagem' },
+      { ...unchanged, goal: 'viagem', name: 'Ana' },
+      unchanged,
+    ] });
+    const { server } = application(model);
+    const initial = await post(server, 'Quero estudar para viagem.');
+    const { conversationId } = languageSchoolChatResponseSchema.parse(initial.json());
+    const updated = await post(server, 'Meu nome é Ana.', conversationId);
+    const next = await post(server, 'Pode continuar?', conversationId);
+
+    expect(updated.statusCode).toBe(200);
+    expect(next.statusCode).toBe(200);
+    expect(contextAt(model, 0)).toMatchObject({ goal: 'viagem', name: null, revision: 1 });
+    expect(contextAt(model, 1)).toEqual({ ...contextAt(model, 0), name: 'Ana', revision: 2 });
+    expect(contextAt(model, 2)).toEqual(contextAt(model, 1));
+    expect(visitorHistoryAt(model, 2)).toEqual([
+      'Quero estudar para viagem.', 'Meu nome é Ana.', 'Pode continuar?',
+    ]);
+  });
+
+  it.each([
+    { label: 'formato inválido', contact: { type: 'email', value: 'inválido' } },
+    { label: 'valor inventado', contact: { type: 'email', value: 'inventado@example.com' } },
+  ])('não salva nome, revisão ou histórico de patch misto com contato de $label', async ({ contact }) => {
+    const model = new ScriptedChatModel([
+      new AIMessage('Entendi o objetivo.'), new AIMessage('Podemos continuar.'),
+    ], { contextSteps: [
+      { ...unchanged, goal: 'viagem' },
+      { ...unchanged, goal: 'viagem', name: 'Ana', contact },
+      unchanged,
+    ] });
+    const { server } = application(model);
+    const initialMessage = 'Quero estudar para viagem.';
+    const initial = await post(server, initialMessage);
+    const { conversationId } = languageSchoolChatResponseSchema.parse(initial.json());
+    const failure = await post(server, 'Meu nome é Ana.', conversationId);
+    const retry = await post(server, 'Pode continuar?', conversationId);
+
+    expect(failure.statusCode).toBe(500);
+    expect(chatErrorResponseSchema.parse(failure.json()).error.code).toBe('CHAT_ERROR');
+    expect(retry.statusCode).toBe(200);
+    expect(contextAt(model, 1)).toEqual(contextAt(model, 0));
+    expect(contextAt(model, 1)).toMatchObject({ goal: 'viagem', name: null, contact: null, revision: 1 });
+    expect(model.calls).toHaveLength(2);
+    expect(model.contextCalls).toHaveLength(3);
+    expect(model.calls[1]?.messages.filter((message) => message.type !== 'system').map((message) => message.content))
+      .toEqual([initialMessage, 'Entendi o objetivo.', 'Pode continuar?']);
+    expect(model.contextCalls[2]?.messages.filter((message) => message.type === 'human').map((message) => message.content))
+      .toEqual([initialMessage, 'Pode continuar?']);
+  });
+
   it('mantém contextos independentes ao intercalar duas conversas', async () => {
     const model = new ScriptedChatModel([
       new AIMessage('Resposta para Lia.'),
@@ -237,26 +318,32 @@ describe('contexto atual do chat escolar', () => {
     expect(visitorHistoryAt(model, 1)).toEqual(['Olá', 'Podemos continuar?']);
   });
 
-  it('não usa objetivo do histórico como fonte para uma alteração na mensagem atual', async () => {
+  it('rejeita objetivo antigo do histórico depois de uma correção, preservando o estado vigente', async () => {
     const model = new ScriptedChatModel([
       new AIMessage('Entendi o interesse inicial.'),
       new AIMessage('Agora consideramos entrevistas de emprego.'),
+      new AIMessage('Continuamos com entrevistas de emprego.'),
     ], { contextSteps: [
       { ...unchanged, goal: 'viagem' },
-      { ...unchanged, goal: 'viagem' },
       { ...unchanged, goal: 'entrevistas de emprego' },
+      { ...unchanged, goal: 'viagem' },
+      unchanged,
     ] });
     const { server } = application(model);
     const initial = await post(server, 'Quero estudar para viagem.');
     const { conversationId } = languageSchoolChatResponseSchema.parse(initial.json());
-    const failure = await post(server, 'Agora prefiro entrevistas de emprego.', conversationId);
-    const retry = await post(server, 'Quero entrevistas de emprego.', conversationId);
+    const correction = await post(server, 'Agora prefiro entrevistas de emprego.', conversationId);
+    const failure = await post(server, 'Pode continuar?', conversationId);
+    const retry = await post(server, 'Podemos seguir?', conversationId);
 
+    expect(correction.statusCode).toBe(200);
     expect(failure.statusCode).toBe(500);
+    expect(chatErrorResponseSchema.parse(failure.json()).error.code).toBe('CHAT_ERROR');
     expect(retry.statusCode).toBe(200);
     expect(contextAt(model, 1)).toMatchObject({ goal: 'entrevistas de emprego', revision: 2 });
-    expect(visitorHistoryAt(model, 1)).toEqual([
-      'Quero estudar para viagem.', 'Quero entrevistas de emprego.',
+    expect(contextAt(model, 2)).toEqual(contextAt(model, 1));
+    expect(visitorHistoryAt(model, 2)).toEqual([
+      'Quero estudar para viagem.', 'Agora prefiro entrevistas de emprego.', 'Podemos seguir?',
     ]);
   });
 

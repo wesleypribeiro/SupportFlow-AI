@@ -130,10 +130,13 @@ Reaplicar os mesmos valores ou não propor alterações mantém a revisão.
 A interpretação usa `withStructuredOutput` do LangChain com o mesmo modelo
 injetado e somente mensagens do visitante. Uma proposta não modifica a conversa:
 Zod e `applyContextPatch` validam os campos antes de produzir uma nova cópia.
-Objetivo, nome e contato precisam aparecer literalmente na mensagem atual; uma
-resposta anterior do assistente não serve de fonte. Formatos de contato seguem os
-schemas já aprovados, sem normalização. Falha de interpretação, validação, catálogo
-ou atendimento retorna `CHAT_ERROR` e preserva integralmente o turno anterior.
+Alterações de objetivo, nome e contato precisam aparecer literalmente na mensagem
+atual; uma resposta anterior do assistente não serve de fonte. Repetir exatamente
+o valor vigente é no-op, mesmo sem nova menção, e não aumenta a revisão. Contato
+repetido exige igualdade de `type` e `value`, sem normalização. Um valor antigo
+substituído continua sujeito à validação da mensagem atual. Formatos de contato
+seguem os schemas já aprovados. Falha de interpretação, validação, catálogo ou
+atendimento retorna `CHAT_ERROR` e preserva integralmente o turno anterior.
 
 Decisões conservadoras desta etapa: `null` na proposta significa **não alterar**,
 enquanto `null` no contexto significa **ainda não informado**; não há comando de

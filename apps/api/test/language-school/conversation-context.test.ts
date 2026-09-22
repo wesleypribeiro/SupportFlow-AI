@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { ActiveCourseSummary } from '@supportflow/contracts/language-school';
+import type { ActiveCourseSummary, Contact } from '@supportflow/contracts/language-school';
 import {
   applyContextPatch,
   contextPatchSchema,
@@ -76,6 +76,70 @@ describe('ConversationContext e applyContextPatch', () => {
 
     expect(repeated).toEqual(first);
     expect(repeated.revision).toBe(1);
+  });
+
+  it.each([
+    patch({ goal: 'viagem' }),
+    patch({ name: 'Ana' }),
+    patch({ goal: 'viagem', name: 'Ana', contact: { type: 'email', value: 'ana@example.com' } }),
+  ])('aceita repetição do estado atual sem menção na nova mensagem: %j', (input) => {
+    const current = {
+      ...createConversationContext(), goal: 'viagem', name: 'Ana',
+      contact: { type: 'email' as const, value: 'ana@example.com' }, revision: 1,
+    };
+    const before = structuredClone(current);
+    const repeated = applyContextPatch(current, input, 'Pode continuar?', courses);
+
+    expect(repeated).toEqual(before);
+    expect(current).toEqual(before);
+    expect(repeated.revision).toBe(1);
+  });
+
+  it.each([
+    { type: 'email', value: 'Ana@example.com' },
+    { type: 'phone', value: '+55 (11) 99999-0000' },
+  ] satisfies Contact[])('aceita contato $type equivalente em outro objeto sem reafirmação', (contact) => {
+    const current = { ...createConversationContext(), contact, revision: 1 };
+    const input = patch({ contact: structuredClone(contact) });
+
+    expect(input.contact).not.toBe(current.contact);
+    expect(applyContextPatch(current, input, 'Pode continuar?', courses)).toEqual(current);
+  });
+
+  it('ignora objetivo repetido e incrementa uma vez ao receber um nome novo válido', () => {
+    const current = { ...createConversationContext(), goal: 'viagem', revision: 1 };
+    const updated = applyContextPatch(current, patch({ goal: 'viagem', name: 'Ana' }),
+      'Meu nome é Ana.', courses);
+
+    expect(updated).toEqual({ ...current, name: 'Ana', revision: 2 });
+    expect(current).toMatchObject({ goal: 'viagem', name: null, revision: 1 });
+  });
+
+  it.each([
+    { type: 'email', value: 'outro@example.com' },
+    { type: 'email', value: 'ANA@example.com' },
+    { type: 'phone', value: 'ana@example.com' },
+  ] satisfies Contact[])('não considera contato diferente ou inválido como repetição: %j', (contact) => {
+    const current = {
+      ...createConversationContext(),
+      contact: { type: 'email' as const, value: 'ana@example.com' }, revision: 1,
+    };
+    const before = structuredClone(current);
+
+    expect(() => applyContextPatch(current, patch({ contact }), 'Pode continuar?', courses)).toThrow();
+    expect(current).toEqual(before);
+  });
+
+  it.each([
+    { type: 'email', value: 'inválido' },
+    { type: 'email', value: 'inventado@example.com' },
+  ] satisfies Contact[])('rejeita o patch misto inteiro se o novo contato não for válido e sustentado: %j', (contact) => {
+    const current = { ...createConversationContext(), goal: 'viagem', revision: 1 };
+    const before = structuredClone(current);
+
+    expect(() => applyContextPatch(current, patch({ goal: 'viagem', name: 'Ana', contact }),
+      'Meu nome é Ana.', courses)).toThrow();
+    expect(current).toEqual(before);
   });
 
   it('null mantém valores anteriores e não incrementa revisão', () => {

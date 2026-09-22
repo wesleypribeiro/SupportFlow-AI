@@ -96,7 +96,16 @@ export function applyContextPatch(
   const patch = contextPatchSchema.parse(input);
   const previous = conversationContextSchema.parse(current);
 
-  for (const value of [patch.goal, patch.name, patch.contact?.value ?? null]) {
+  // Repetições exatas do estado vigente não são alterações. O schema inteiro já
+  // foi validado; somente valores diferentes ainda exigem fonte na mensagem atual.
+  const repeatedContact = patch.contact?.type === previous.contact?.type
+    && patch.contact?.value === previous.contact?.value;
+  const proposedChanges = [
+    patch.goal === previous.goal ? null : patch.goal,
+    patch.name === previous.name ? null : patch.name,
+    repeatedContact ? null : patch.contact?.value ?? null,
+  ];
+  for (const value of proposedChanges) {
     if (value !== null && !containsLiteral(message, value)) {
       throw new Error('Atualização de contexto sem informação correspondente do visitante.');
     }
