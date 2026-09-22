@@ -32,7 +32,7 @@ describe('fundação do backend', () => {
 
   it('mantém configuração de escola e provedor fora da resposta pública', async () => {
     const app = createApplication({
-      SCHOOL_ID: 'school_test',
+      SCHOOL_ID: 'school_demo',
       OPENAI_API_KEY: 'test-only-secret',
       OPENAI_MODEL: 'test-only-model',
     });
@@ -40,11 +40,26 @@ describe('fundação do backend', () => {
 
     const response = await server.inject({ method: 'GET', url: '/health' });
 
-    expect(app.config.school.schoolId).toBe('school_test');
+    expect(app.config.school.schoolId).toBe('school_demo');
     expect(app.config.llm).toEqual({
       provider: 'openai', apiKey: 'test-only-secret', model: 'test-only-model',
     });
     expect(response.json()).toEqual({ status: 'ok' });
+  });
+
+  it('compõe as consultas da escola configurada sem adicionar rotas de chat', async () => {
+    const app = createApplication({ SCHOOL_ID: 'school_demo' });
+    server = app.server;
+
+    const result = await app.catalogTools.get_school_info({});
+    expect(result).toMatchObject({ ok: true, data: { school: { id: 'school_demo' } } });
+    const response = await server.inject({ method: 'POST', url: '/api/chat', payload: { message: 'Olá' } });
+    expect(response.statusCode).toBe(404);
+  });
+
+  it('recusa uma escola não cadastrada sem renomear a fixture', () => {
+    expect(() => createApplication({ SCHOOL_ID: 'school_unknown' }))
+      .toThrow('SCHOOL_ID não corresponde à escola cadastrada nesta demonstração.');
   });
 });
 

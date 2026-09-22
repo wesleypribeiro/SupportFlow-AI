@@ -4,8 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "predev": "npm run build --workspace @supportflow/contracts",
     "dev": "node --env-file-if-exists=.env --watch --import tsx src/main.ts",
     "start": "node --env-file-if-exists=.env dist/main.js",
+    "pretypecheck": "npm run build --workspace @supportflow/contracts",
     "typecheck": "tsc --noEmit",
     "build": "tsc -p tsconfig.build.json"
   },
