@@ -7,10 +7,12 @@ import { loadCoreConfig } from './core/config.js';
 import { InMemoryConversations } from './core/conversations.js';
 import { createServer } from './core/server.js';
 import { loadLanguageSchoolConfig } from './modules/language-school/config.js';
+import { createConversationContext } from './modules/language-school/domain/conversation-context.js';
 import { courseFixtures, schoolFixture } from './modules/language-school/infrastructure/catalog-fixtures.js';
 import { createCatalogTools } from './modules/language-school/infrastructure/catalog-tools.js';
 import { InMemorySchoolRepository } from './modules/language-school/infrastructure/in-memory-school-repository.js';
 import { createLangChainCatalogTools } from './modules/language-school/infrastructure/langchain-catalog-tools.js';
+import { createContextUpdater, describeConversationContext } from './modules/language-school/infrastructure/langchain-context.js';
 import { languageSchoolInstructions } from './modules/language-school/prompt.js';
 
 // Composição explícita: o core não importa nem escolhe o segmento da aplicação.
@@ -32,12 +34,14 @@ export function createApplication(environment: NodeJS.ProcessEnv, options: { mod
     : null);
   const server = createServer();
   registerChatRoute(server, {
-    conversations: new InMemoryConversations(),
+    conversations: new InMemoryConversations(createConversationContext),
     runTurn: createChatRunner({
       model,
       instructions: languageSchoolInstructions,
       tools: langChainCatalog.tools,
       executeTool: langChainCatalog.execute,
+      updateContext: createContextUpdater(model, schoolRepository),
+      describeContext: describeConversationContext,
     }),
     parseResponse: (response) => languageSchoolChatResponseSchema.parse(response),
   });

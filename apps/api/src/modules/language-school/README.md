@@ -1,19 +1,26 @@
 # Módulo de escolas de idiomas
 
 Catálogo de leitura das tasks 2.2 e 2.3 de `language-school-sales-mvp`, conectado
-ao chat na task 3.1 e usando integralmente os contratos aprovados na task 2.1.
+ao chat na task 3.1, com contexto vigente na task 3.2 e usando integralmente os
+contratos aprovados na task 2.1.
 
 ## Organização
 
 - `domain/school-repository.ts`: interface de consulta da escola configurada.
+- `domain/conversation-context.ts`: schemas internos e aplicação determinística
+  de patches com validação da fonte, referências de curso e revisão.
 - `application/catalog-queries.ts`: operações determinísticas, dependentes
   somente da interface e dos tipos compartilhados.
+- `application/update-conversation-context.ts`: consulta ao catálogo pelo repository
+  quando um patch propõe uma referência de curso.
 - `infrastructure/catalog-fixtures.ts`: uma escola e quatro cursos fictícios.
 - `infrastructure/in-memory-school-repository.ts`: armazenamento local de leitura.
 - `infrastructure/catalog-tools.ts`: três funções com validação de entrada/saída e
   conversão de falhas para resultados públicos.
 - `infrastructure/langchain-catalog-tools.ts`: adaptação das três consultas para
   tool calling, sem mudar domínio, casos de uso ou repositório.
+- `infrastructure/langchain-context.ts`: interpretação estruturada pelo mesmo modelo
+  e descrição do contexto vigente para o atendimento.
 - `prompt.ts`: instruções iniciais de atendimento e consulta de fatos do catálogo.
 
 O ponto de composição `src/app.ts` instancia o repositório e expõe `catalogTools`
@@ -26,6 +33,24 @@ O resultado validado vai em JSON no conteúdo da `ToolMessage` e como objeto no
 do objeto também compõe `results` de `/api/chat`, independentemente da prosa do modelo.
 Argumentos rejeitados pelo LangChain são convertidos em `INVALID_INPUT` sanitizado;
 `NOT_FOUND` é um resultado normal. Falhas técnicas interrompem o turno com `CHAT_ERROR`.
+
+O contexto pertence ao módulo escolar; o core armazena e transporta seu tipo por
+composição, sem conhecer regras de aluno ou curso. `ConversationContext` mantém
+`goal`, `name`, `contact`, `courseId`, `slotId`, `leadId` e `revision`. A interpretação
+propõe somente `goal`, `name`, `contact` e `courseReference`, com `null` significando
+preservar. O patch usa schemas internos, sem ampliar contratos públicos.
+
+`applyContextPatch` valida a proposta inteira antes de aplicar mudanças. Dados
+pessoais e objetivo exigem trechos literais da mensagem atual. Referências de curso
+precisam de correspondência única entre as opções ativas mencionadas; uma ambiguidade
+mantém a seleção anterior. Comparações de nome/idioma ignoram caixa, sem reescrever os
+registros. A revisão aumenta uma vez quando algum campo relevante muda, e permanece
+igual para valores idênticos. Nenhum lead ou horário é criado nesta etapa.
+
+O contexto validado chega à seleção das tools em uma `SystemMessage` separada.
+As respostas do assistente não alimentam a interpretação de dados pessoais. O core
+salva contexto e histórico juntos após validar a resposta HTTP; qualquer falha do
+turno descarta a cópia em processamento e mantém o estado anterior.
 
 ## SchoolRepository
 

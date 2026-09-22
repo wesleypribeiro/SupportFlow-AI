@@ -175,10 +175,10 @@ describe('POST /api/chat com modelo LangChain simulado', () => {
       results: [], pendingAction: null,
     });
     const history = model.calls[2]?.messages ?? [];
-    expect(history.map((message) => message.type)).toEqual(['system', 'human', 'ai', 'tool', 'ai', 'human']);
-    expect(history[1]?.content).toBe('Quais cursos existem?');
-    expect(history[4]?.content).toBe('Estes são os cursos cadastrados.');
-    expect(history[5]?.content).toBe('Obrigado!');
+    expect(history.map((message) => message.type)).toEqual(['system', 'system', 'human', 'ai', 'tool', 'ai', 'human']);
+    expect(history[2]?.content).toBe('Quais cursos existem?');
+    expect(history[5]?.content).toBe('Estes são os cursos cadastrados.');
+    expect(history[6]?.content).toBe('Obrigado!');
   });
 
   it('isola os históricos de conversas distintas', async () => {
@@ -201,7 +201,7 @@ describe('POST /api/chat com modelo LangChain simulado', () => {
 
     expect(continuation.statusCode).toBe(200);
     expect(model.calls[1]?.messages.map((message) => message.content)).not.toContain('Interesse A');
-    expect(model.calls[2]?.messages.slice(1).map((message) => message.content))
+    expect(model.calls[2]?.messages.filter((message) => message.type !== 'system').map((message) => message.content))
       .toEqual(['Interesse A', 'Resposta da conversa A.', 'Continuar A']);
   });
 
@@ -375,7 +375,7 @@ describe('POST /api/chat com modelo LangChain simulado', () => {
 
     expect(failed.statusCode).toBe(500);
     expect(retry.statusCode).toBe(200);
-    expect(model.calls[3]?.messages.slice(1).map((message) => message.content))
+    expect(model.calls[3]?.messages.filter((message) => message.type !== 'system').map((message) => message.content))
       .toEqual(['Início', 'Olá!', 'Nova tentativa']);
   });
 

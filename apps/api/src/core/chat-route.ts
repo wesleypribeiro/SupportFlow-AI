@@ -12,9 +12,9 @@ function publicError(code: 'INVALID_REQUEST' | 'NOT_FOUND' | 'CHAT_ERROR') {
   return chatErrorResponseSchema.parse({ error: { code, message: messages[code] } });
 }
 
-export function registerChatRoute(server: FastifyInstance, composition: {
-  conversations: InMemoryConversations;
-  runTurn: ReturnType<typeof createChatRunner>;
+export function registerChatRoute<Context>(server: FastifyInstance, composition: {
+  conversations: InMemoryConversations<Context>;
+  runTurn: ReturnType<typeof createChatRunner<Context>>;
   parseResponse: (response: unknown) => unknown;
 }) {
   const { conversations, runTurn, parseResponse } = composition;
@@ -45,7 +45,7 @@ export function registerChatRoute(server: FastifyInstance, composition: {
 
       // Falhas de modelo/tools/schema são sanitizadas aqui, sem classificar exceções internas.
       try {
-        const turn = await runTurn(conversation.history, message);
+        const turn = await runTurn(conversation, message);
         const response = parseResponse({
           conversationId: conversation.id,
           reply: turn.reply,
@@ -53,7 +53,7 @@ export function registerChatRoute(server: FastifyInstance, composition: {
           pendingAction: null,
         });
 
-        conversations.save({ ...conversation, history: turn.history });
+        conversations.save({ ...conversation, history: turn.history, context: turn.context });
         return reply.send(response);
       } catch {
         return reply.code(500).send(publicError('CHAT_ERROR'));

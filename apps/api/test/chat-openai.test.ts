@@ -19,7 +19,7 @@ describe('POST /api/chat com SDK OpenAI e transporte simulado', () => {
     vi.unstubAllEnvs();
   });
 
-  it('envia tools na seleção e finaliza sem tools nem tool_choice, preservando o resultado oficial', async () => {
+  it('interpreta contexto, consulta tools e finaliza sem tools nem tool_choice, preservando o resultado oficial', async () => {
     const requests: Record<string, unknown>[] = [];
     const providerFetch = vi.fn<typeof fetch>(async (_url, init) => {
       const request = JSON.parse(String(init?.body)) as Record<string, unknown>;
@@ -37,7 +37,8 @@ describe('POST /api/chat com SDK OpenAI e transporte simulado', () => {
         }), { status: 400, headers: { 'content-type': 'application/json' } });
       }
 
-      const selecting = requests.length === 1;
+      const interpreting = requests.length === 1;
+      const selecting = requests.length === 2;
       return new Response(JSON.stringify({
         id: `chatcmpl_mock_${requests.length}`,
         object: 'chat.completion',
@@ -45,15 +46,20 @@ describe('POST /api/chat com SDK OpenAI e transporte simulado', () => {
         model: 'gpt-4o-mini',
         choices: [{
           index: 0,
-          finish_reason: selecting ? 'tool_calls' : 'stop',
-          message: selecting
+          finish_reason: interpreting || selecting ? 'tool_calls' : 'stop',
+          message: interpreting || selecting
             ? {
               role: 'assistant',
               content: null,
               tool_calls: [{
-                id: 'call_catalog_openai',
+                id: interpreting ? 'call_context_openai' : 'call_catalog_openai',
                 type: 'function',
-                function: { name: 'get_courses', arguments: '{}' },
+                function: interpreting
+                  ? {
+                    name: 'interpret_context_patch',
+                    arguments: JSON.stringify({ goal: null, name: null, contact: null, courseReference: null }),
+                  }
+                  : { name: 'get_courses', arguments: '{}' },
               }],
             }
             : { role: 'assistant', content: 'Consultei os cursos disponíveis da escola.' },
@@ -90,15 +96,31 @@ describe('POST /api/chat com SDK OpenAI e transporte simulado', () => {
       expect(body.reply).toBe('Consultei os cursos disponíveis da escola.');
       expect(body.results).toEqual([officialResult]);
       expect(body.pendingAction).toBeNull();
-      expect(providerFetch).toHaveBeenCalledTimes(2);
+      expect(providerFetch).toHaveBeenCalledTimes(3);
       expect(requests[0]?.tools).toEqual([
+        expect.objectContaining({
+          type: 'function',
+          function: expect.objectContaining({
+            name: 'interpret_context_patch',
+            parameters: expect.objectContaining({
+              type: 'object',
+              additionalProperties: false,
+              required: ['goal', 'name', 'contact', 'courseReference'],
+            }),
+          }),
+        }),
+      ]);
+      expect(requests[0]?.tool_choice).toEqual({
+        type: 'function', function: { name: 'interpret_context_patch' },
+      });
+      expect(requests[1]?.tools).toEqual([
         expect.objectContaining({ type: 'function', function: expect.objectContaining({ name: 'get_school_info' }) }),
         expect.objectContaining({ type: 'function', function: expect.objectContaining({ name: 'get_courses' }) }),
         expect.objectContaining({ type: 'function', function: expect.objectContaining({ name: 'get_course_details' }) }),
       ]);
-      expect(requests[1]).not.toHaveProperty('tools');
-      expect(requests[1]).not.toHaveProperty('tool_choice');
-      expect(requests[1]?.messages).toEqual(expect.arrayContaining([
+      expect(requests[2]).not.toHaveProperty('tools');
+      expect(requests[2]).not.toHaveProperty('tool_choice');
+      expect(requests[2]?.messages).toEqual(expect.arrayContaining([
         expect.objectContaining({
           role: 'assistant',
           tool_calls: [{
@@ -113,6 +135,8 @@ describe('POST /api/chat com SDK OpenAI e transporte simulado', () => {
           content: JSON.stringify(officialResult),
         }),
       ]));
+      expect(JSON.stringify(requests[1]?.messages)).not.toContain('call_context_openai');
+      expect(JSON.stringify(requests[2]?.messages)).not.toContain('call_context_openai');
     } finally {
       await server.close();
     }
