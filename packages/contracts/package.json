@@ -7,12 +7,20 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./chat": {
+      "types": "./dist/chat/index.d.ts",
+      "import": "./dist/chat/index.js"
+    },
+    "./language-school": {
+      "types": "./dist/language-school/index.d.ts",
+      "import": "./dist/language-school/index.js"
     }
   },
   "files": ["dist"],
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "build": "tsc"
+    "build": "tsc -p tsconfig.build.json"
   },
   "dependencies": {
     "zod": "^4.6.5"

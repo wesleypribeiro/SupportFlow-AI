@@ -2,8 +2,9 @@
 
 Fundação do MVP para escolas de idiomas, seguindo exclusivamente
 [`language-school-sales-mvp`](openspec/changes/language-school-sales-mvp/proposal.md).
-As tasks 1.1 e 1.2 preparam a aplicação; chat, catálogo, ferramentas, cadastro e
-agendamento serão implementados nos milestones seguintes.
+As tasks 1.1, 1.2 e 2.1 preparam a aplicação e seus contratos públicos; chat,
+catálogo, execução de ferramentas, cadastro e agendamento serão implementados
+nos milestones seguintes.
 
 ## Executar localmente
 
@@ -48,7 +49,7 @@ apps/api/src/
   app.ts                      composição manual, testável sem escutar uma porta
   main.ts                     ambiente do processo, escuta e encerramento
 apps/web/                     aplicação Next.js
-packages/contracts/           pacote compartilhado, ainda sem contratos de negócio
+packages/contracts/           schemas e tipos públicos de chat e atendimento escolar
 ```
 
 Todos os workspaces herdam TypeScript strict. O core não importa o módulo escolar;
@@ -58,6 +59,9 @@ os casos de uso e a infraestrutura escolar serão criados nas respectivas tarefa
 LangChain está instalado somente na API, por meio de `@langchain/core` e
 `@langchain/openai`, sem LangGraph. Os contratos compartilhados não dependem do
 backend nem exportam sua configuração. O frontend não importa código da API.
+
+Os schemas Zod e as decisões de modelagem estão documentados no
+[README dos contratos](packages/contracts/README.md).
 
 ## Verificação
 

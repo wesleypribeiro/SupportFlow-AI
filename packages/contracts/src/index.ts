@@ -1,2 +1,3 @@
-// Os contratos de chat e do segmento escolar serão definidos no milestone 2.
-export {};
+export * from './shared.js';
+export * from './chat/index.js';
+export * from './language-school/index.js';
