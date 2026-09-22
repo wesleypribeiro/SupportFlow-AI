@@ -2,9 +2,10 @@
 
 Fundação do MVP para escolas de idiomas, seguindo exclusivamente
 [`language-school-sales-mvp`](openspec/changes/language-school-sales-mvp/proposal.md).
-As tasks 1.1 a 3.4 entregam a fundação, os contratos públicos, o catálogo escolar
+As tasks 1.1 a 4.1 entregam a fundação, os contratos públicos, o catálogo escolar
 e a API de chat com histórico e contexto vigente em memória, além de três tools
-via LangChain, a interface de chat e a política de consultas por turno.
+via LangChain, a interface de chat, a política de consultas por turno e a infraestrutura
+de ações pendentes com confirmação por IDs.
 Cadastro e agendamento ficam para as próximas tasks.
 
 ## Executar localmente
@@ -47,7 +48,7 @@ e o chat retorna HTTP 500 com `CHAT_ERROR`. A composição carrega `school_demo`
 ## Consultar pelo chat
 
 Com o provedor configurado no backend, abra o frontend e envie uma mensagem.
-Enter envia; Shift+Enter insere uma nova linha. O Next.js encaminha `/api/chat`
+Enter envia; Shift+Enter insere uma nova linha. O Next.js encaminha `/api/chat` e `/api/chat/confirm`
 para o Fastify local em `127.0.0.1:3001`, por rewrite, sem duplicar a rota.
 Também é possível consultar pelo terminal:
 
@@ -60,7 +61,9 @@ curl http://127.0.0.1:3001/api/chat \
 A resposta contém `{ conversationId, reply, results, pendingAction }`. Use o
 `conversationId` retornado junto à próxima `message` para continuar a conversa.
 O navegador pode enviar somente esses dois campos; o ID é gerado pelo backend.
-`pendingAction` permanece `null` nesta etapa.
+`pendingAction` permanece `null` no fluxo normal: nenhuma tool de escrita está conectada.
+Quando uma ação é preparada internamente pelo backend, esse campo publica somente
+`{ actionId, kind, preview }` da ação vigente.
 
 O frontend mantém somente o histórico visual de cada turno, o ID retornado, o
 rascunho e os estados de envio/erro. Não recebe nem replica o contexto interno.
@@ -79,9 +82,11 @@ Cada instância da aplicação mantém um `Map` privado de conversas, com ID,
 histórico LangChain e contexto atual separado. Histórico e contexto são salvos
 juntos apenas depois da conclusão e validação do turno; falhas não deixam chamadas
 de ferramenta pendentes ou mudanças parciais de contexto. Reiniciar a API apaga as conversas. Não há
-autenticação, expiração ou persistência. A serialização de envios simultâneos da
-mesma conversa fica para a etapa de confirmação: nesta versão, envie um turno por
-vez. As operações de leitura/gravação já estão centralizadas por conversa.
+autenticação, expiração ou persistência. Mensagens e confirmações compartilham
+`conversations.runExclusive`: uma fila local de promises por `conversationId`.
+Cada operação lê o estado quando chega sua vez; falhas não bloqueiam as seguintes.
+Conversas diferentes prosseguem independentemente e entradas da fila são removidas
+quando ficam ociosas.
 
 Primeiro, o mesmo modelo interpreta uma proposta estruturada de atualização do
 contexto, que o backend valida e aplica. Em seguida, o atendimento usa o contexto
@@ -98,12 +103,50 @@ altera os dados oficiais. Uma saudação pode retornar `results: []` sem consult
 | Situação | HTTP | Código público |
 | --- | --- | --- |
 | Entrada inválida, JSON malformado ou campos adicionais | 400 | `INVALID_REQUEST` |
-| Conversa informada não existe | 404 | `NOT_FOUND` |
+| Conversa/ação inexistente ou ação de outra conversa | 404 | `NOT_FOUND` |
+| Confirmação de ação substituída ou de revisão antiga | 409 | `ACTION_STALE` |
 | Modelo ausente, falha inesperada ou saída inválida | 500 | `CHAT_ERROR` |
 
 `INVALID_INPUT` ou `NOT_FOUND` de uma consulta aparecem em `results` com HTTP 200
 quando o modelo consegue concluir o turno. `OPERATION_FAILED` de uma tool interrompe
 o atendimento com `CHAT_ERROR`. As mensagens públicas não incluem exceções internas.
+
+## Infraestrutura de confirmação
+
+`POST /api/chat/confirm` aceita somente `{ conversationId, actionId }`. Campos como
+`args`, `confirmed`, `revision` ou dados de negócio retornam `400/INVALID_REQUEST`.
+Texto “Sim” enviado ao chat não autoriza a execução. A confirmação não consulta a LLM.
+
+O core guarda ações em memória com ID, conversa, tipo, argumentos capturados,
+revisão, prévia e estado `pending`, `stale` ou `completed`. A composição escolar
+valida a prévia usando os contratos existentes e deriva dela os argumentos, sem
+aceitar uma segunda versão editável. Cópias defensivas protegem a preparação,
+as leituras, os argumentos entregues ao executor e os recibos.
+
+Há somente uma prévia pendente vigente por conversa. Preparar outra invalida a
+anterior; mudar a revisão após um turno bem-sucedido também a invalida. Um turno
+que falha não salva histórico/contexto nem invalida a ação. IDs invalidados são
+retidos para responder `ACTION_STALE`, e recibos concluídos para repetição segura.
+Esses registros desaparecem ao reiniciar o processo.
+
+`createApplication` oferece `prepareAction(conversationId, { kind, preview })`
+somente para composição interna, passando pela mesma fila das rotas, e aceita
+`executeAction` como dependência opcional. O executor recebe uma cópia da ação
+armazenada, inclusive seus argumentos e vínculo. Não há executor de negócio
+instalado em produção nesta task; nenhum lead ou reserva é gravado. Os testes
+injetam um executor determinístico compatível com os schemas públicos. As regras
+de cadastro/reserva e sua conexão às tools pertencem às próximas tasks.
+
+O recibo validado (`reply` e `results`) é salvo antes de construir/enviar a resposta
+HTTP. Uma repetição verifica o vínculo e devolve esse snapshot antes de avaliar a
+revisão atual, sem chamar novamente o executor, inclusive após falha de envio ou
+mudança de contexto. O envelope continua mostrando a prévia **atualmente** pendente,
+quando existir outra; o recibo original não muda. Falha técnica antes de registrar
+um recibo válido retorna `500/CHAT_ERROR`. Não há botão de confirmação na UI ainda.
+
+Os testes usam barreiras de promises para comprovar a ordem correção → confirmação,
+a execução única em confirmações concorrentes, a independência entre conversas e
+a limpeza da fila, sem temporizadores de espera nem serviços externos.
 
 ## Contexto vigente
 

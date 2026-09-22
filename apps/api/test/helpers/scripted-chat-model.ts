@@ -7,7 +7,7 @@ import { AIMessageChunk } from '@langchain/core/messages';
 import type { AIMessage, BaseMessage } from '@langchain/core/messages';
 import type { ChatResult } from '@langchain/core/outputs';
 
-type ScriptedStep = AIMessage | Error | ((messages: readonly BaseMessage[]) => AIMessage);
+type ScriptedStep = AIMessage | Error | ((messages: readonly BaseMessage[]) => AIMessage | Promise<AIMessage>);
 type ScriptedCallOptions = BaseChatModelCallOptions & { tools?: BindToolsInput[] };
 type RecordedCall = { messages: BaseMessage[]; options: ScriptedCallOptions };
 
@@ -63,7 +63,7 @@ export class ScriptedChatModel extends BaseChatModel<ScriptedCallOptions> {
     const step = this.steps.shift();
     if (!step) throw new Error('O teste não definiu resposta para esta chamada do modelo.');
     if (step instanceof Error) throw step;
-    const message = typeof step === 'function' ? step(messages) : step;
+    const message = typeof step === 'function' ? await step(messages) : step;
     return {
       generations: [{ message, text: typeof message.content === 'string' ? message.content : '' }],
     };

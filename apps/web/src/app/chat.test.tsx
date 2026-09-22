@@ -259,9 +259,10 @@ describe('chat da escola', () => {
     expect(screen.queryByText('Detalhe técnico.')).toBeNull();
   });
 
-  it('encaminha apenas /api/chat ao Fastify pelo rewrite do Next', async () => {
+  it('encaminha mensagens e confirmações ao Fastify pelo rewrite do Next', async () => {
     expect(await nextConfig.rewrites?.()).toEqual([
       { source: '/api/chat', destination: 'http://127.0.0.1:3001/api/chat' },
+      { source: '/api/chat/confirm', destination: 'http://127.0.0.1:3001/api/chat/confirm' },
     ]);
   });
 });
