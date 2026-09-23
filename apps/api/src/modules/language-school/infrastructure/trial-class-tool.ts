@@ -5,6 +5,7 @@ import type { TrialClassPreview, TrialClassProposalDependencies, TrialClassScope
 
 export function createScheduleTrialClassTool(composition: TrialClassProposalDependencies & {
   prepareAction: (scope: TrialClassScope, preview: TrialClassPreview) => void;
+  clearPendingAction: (scope: TrialClassScope) => void;
 }) {
   // Escopo oficial separado da entrada pública. Ainda sem registro no LangChain.
   return async function schedule_trial_class(input: unknown, scope: TrialClassScope): Promise<ScheduleTrialClassResult> {
@@ -13,6 +14,11 @@ export function createScheduleTrialClassTool(composition: TrialClassProposalDepe
     try {
       const proposal = await prepareTrialClassProposal(composition, scope, parsed.data);
       if (!proposal.ok) return scheduleTrialClassResultSchema.parse(proposal);
+      if (proposal.decision === 'existing') {
+        const result = scheduleTrialClassResultSchema.parse({ ok: true, data: { outcome: 'existing', booking: proposal.booking } });
+        composition.clearPendingAction(scope);
+        return result;
+      }
       const result = scheduleTrialClassResultSchema.parse(trialClassFailure('CONFIRMATION_REQUIRED'));
       composition.prepareAction(scope, proposal.preview);
       return result;

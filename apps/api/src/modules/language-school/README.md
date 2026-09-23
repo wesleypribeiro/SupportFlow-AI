@@ -8,6 +8,7 @@ A task 4.4 conecta essa operação ao chat e à interface. Usa os contratos apro
 A task 5.1 acrescenta a consulta de disponibilidade da agenda interna, ainda sem
 registro no LangChain nem seleção conversacional de horários.
 A task 5.2 acrescenta somente a proposta determinística de aula experimental.
+A task 5.3 acrescenta reserva atômica e recibo determinístico pela confirmação HTTP.
 
 ## Organização
 
@@ -260,7 +261,8 @@ inválida e falha após existing, conservando histórico, contexto e lifecycle.
 
 ## Consulta da agenda interna — task 5.1
 
-`domain/trial-class-repository.ts` oferece somente leituras:
+`domain/trial-class-repository.ts` oferece as leituras abaixo e `reserveSlot`,
+acrescentado na task 5.3:
 
 | Método | Retorno |
 | --- | --- |
@@ -270,10 +272,9 @@ inválida e falha após existing, conservando histórico, contexto e lifecycle.
 
 `InMemoryTrialClassRepository` recebe slots e, opcionalmente, reservas iniciais.
 Valida os schemas e mantém cópias defensivas de entradas e saídas. A ocupação usa
-um Map por `slotId`, dentro da mesma instância da agenda. Não há método de escrita,
-geração de ID, bloqueio ou criação de reserva durante uma consulta. A futura
-operação atômica poderá consultar e gravar nesse mesmo estado, sem substituir as
-leituras atuais; ela ainda não está implementada.
+um Map por `slotId`, dentro da mesma instância da agenda. Não há escrita,
+geração de ID, bloqueio ou criação de reserva durante uma consulta. A operação
+atômica da task 5.3 utiliza esse mesmo estado, preservando as leituras existentes.
 
 `application/get-available-slots.ts` reutiliza `getCourseDetails` para verificar o
 curso ativo antes de acessar a agenda. Valida os registros retornados, preserva
@@ -365,12 +366,13 @@ ou ocupação é criada. `get_available_slots` continua mostrando a mesma vaga.
 
 | Condição | Resultado público |
 | --- | --- |
-| Input extra/inválido, slot diferente da seleção ou referências de cursos incompatíveis | `INVALID_INPUT` |
+| Input extra/inválido, slot diferente da seleção, referências de cursos incompatíveis ou fuso incompatível com a escola | `INVALID_INPUT` |
 | Cadastro divergente do contexto | `INVALID_INPUT`, orientando confirmar a atualização do cadastro |
 | Lead/context.leadId ausente, ID do lead diferente, conversa/curso/slot inexistente ou curso inativo | `NOT_FOUND`, sem dados de outra conversa |
-| Slot passado, exatamente no instante atual ou ocupado | `SLOT_UNAVAILABLE` |
+| Slot passado/atual sem reserva própria, ou ocupado por outro lead | `SLOT_UNAVAILABLE` |
+| Reserva já registrada para o mesmo lead e slot (5.3) | `existing`, sem nova ação/escrita |
 | Proposta válida | `CONFIRMATION_REQUIRED` e prévia separada |
-| Falha técnica, vínculo interno incoerente, schema inválido ou fuso incompatível com a escola | `OPERATION_FAILED`, sem detalhes internos |
+| Falha técnica, vínculo interno incoerente ou schema inválido | `OPERATION_FAILED`, sem detalhes internos |
 
 `app.prepareTrialClass(conversationId, input)` usa a mesma fila local de chat e
 confirmação. Lê o contexto atual dentro da fila e prepara a ação somente após
@@ -381,9 +383,8 @@ ação; “Sim” continua sem autorizar nada.
 
 `POST /api/chat/confirm` permanece restrito aos dois IDs. Ação estrangeira/ausente
 retorna 404 e stale retorna 409. Repetir o ID de um cadastro concluído devolve seu
-recibo de `create_lead`, mantendo a proposta de aula pendente. Não há executor de
-reserva nesta task: confirmar uma proposta de aula ainda válida retorna
-`500 / CHAT_ERROR` controlado e a ação permanece pendente, sem sucesso fictício.
+recibo de `create_lead`, mantendo a proposta de aula pendente. A task 5.3 conecta
+o executor real de reserva descrito abaixo; a 5.2 acrescentou apenas a preparação.
 
 O ID `slot_english_occupied` foi preservado para evitar renomear fixtures e testes.
 Ocupação é decidida exclusivamente pelas reservas, nunca pelo nome do slot.
@@ -393,3 +394,68 @@ catálogo, instante absoluto com offsets, ocupação, prévia oficial e imutabil
 Com `server.inject()` e modelo simulado, verificam revisão por nome/contato/objetivo/
 curso/horário, ausência de mudança, isolamento, recibo de cadastro independente e
 ausência de execução de reserva. Não precisam de rede ou credenciais.
+
+## Reserva atômica e recibos — task 5.3
+
+`TrialClassRepository.reserveSlot({ leadId, slotId }, now: Date)` acrescenta a única
+escrita da agenda. Seu resultado interno é `created`/`existing` com `booking`,
+`unavailable` para ocupação por outro lead ou horário não futuro, ou `not_found`
+para slot ausente. Não aceita ID de reserva nem dados de horário do chamador.
+
+Na implementação em memória, a leitura do slot e da ocupação, a decisão e a
+inserção no Map ocorrem sem await/yield. Esta é a fronteira atômica por vaga,
+independente das filas de conversa. Um banco futuro precisará de constraint ou
+transação equivalente. O registro inteiro é validado por `trialClassSchema` antes
+do commit, usa UUID do backend e curso/ISO/fuso do slot oficial. Inputs e retornos
+não permitem alterar o registro armazenado.
+
+Mesmo lead/slot recupera `existing` antes de considerar a vaga ocupada ou o
+horário passado: trata-se de recuperar uma reserva concluída, sem nova escrita.
+Uma nova reserva exige `startsAt > now`, novamente verificado dentro da operação
+atômica. Cada slot possui somente um registro; outro lead recebe `unavailable`.
+
+`validateTrialClassReferences` é compartilhado pela preparação e confirmação:
+reconsulta lead da conversa, compara contexto e cadastro, valida curso ativo,
+seleção do slot e fuso. Fuso válido mas incompatível é agora `INVALID_INPUT`
+para a operação de proposta/confirmação; schemas inválidos continuam falhas
+técnicas. A consulta `get_available_slots` preserva seu comportamento anterior.
+
+`application/confirm-trial-class.ts` usa o relógio injetado e delega a decisão final
+diretamente a `reserveSlot`; não usa `findConfirmedBySlotId` seguido de escrita.
+O executor `infrastructure/trial-class-confirmation.ts` lê a conversa atual e os
+argumentos armazenados da ação. Não confia no snapshot da prévia como prova de
+validade atual e não consulta a LLM. Produz um recibo validado com mensagem
+determinística sobre a agenda demonstrativa.
+
+`infrastructure/action-confirmation.ts` faz o dispatcher explícito por `kind`
+entre os executores de cadastro e aula. O core e os contratos públicos não mudaram.
+As tools de agenda continuam ausentes do LangChain, e não há UI de reserva.
+
+| Situação | Resultado |
+| --- | --- |
+| Confirmação válida de vaga livre | `created`, vaga ocupada |
+| Nova chamada/execução para mesmo lead e mesmo slot | `existing`, sem escrita |
+| Vaga ocupada por outro lead | `SLOT_UNAVAILABLE`, sem escrita adicional |
+| Retry do mesmo actionId concluído | Recibo histórico exato, sem executar novamente |
+| Exceção técnica antes de gravar | HTTP 500 `CHAT_ERROR`, ação disponível para retry |
+
+**Transporte da task 5.3:** o conflito é guardado como recibo em `results` e
+retornado com HTTP 200. Esta escolha segue o fluxo específico de recibo desta
+task e substitui a indicação geral anterior de HTTP 409 para `SLOT_UNAVAILABLE`.
+HTTP 409 continua sendo usado para `ACTION_STALE`. O recibo de conflito também
+conclui a ação; repetir seu ID retorna a mesma indisponibilidade sem outra tentativa.
+
+Depois de `created`, repetir o ID da ação devolve `created`, enquanto uma nova
+chamada da tool retorna `existing` e remove uma prévia que não requer mais escrita.
+Os recibos e reservas são snapshots: mudanças de contexto, updates confirmados
+do lead e novas ações não reescrevem a reserva ou recibos anteriores. Não há
+cancelamento/remarcação. `get_available_slots` exclui o slot ocupado para qualquer
+conversa, inclusive para o próprio lead que o reservou.
+
+`slot-reservation.test.ts` verifica resultados, IDs, cópias, futuro e concorrência
+com `Promise.all` para leads diferentes e iguais. `trial-class-confirmation.test.ts`
+usa `server.inject()` e uma barreira antes da operação real para colocar duas
+conversas simultaneamente na disputa: exatamente uma vence. Cobre revalidação,
+falha antes da escrita, falha de envio após o recibo salvo, retries históricos,
+regressão de cadastro e reservas preservadas após updates. Nenhum teste depende
+de credenciais, rede ou OpenAI real.

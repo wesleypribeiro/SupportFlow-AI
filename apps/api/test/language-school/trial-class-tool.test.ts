@@ -29,11 +29,12 @@ async function harness(slots: readonly Slot[] = slotFixtures) {
     actions.prepare(current.conversationId, current.context.revision, { kind: 'schedule_trial_class', preview });
   });
   const dependencies = { schoolRepository, leadRepository, trialClassRepository, now };
-  const tool = createScheduleTrialClassTool({ ...dependencies, prepareAction });
+  const clearPendingAction = vi.fn((current: TrialClassScope) => { actions.invalidateCurrent(current.conversationId); });
+  const tool = createScheduleTrialClassTool({ ...dependencies, prepareAction, clearPendingAction });
   const query = createAvailableSlotsTool(dependencies);
   const input = { leadId: lead.id, slotId };
   const pending = () => actions.pending(scope.conversationId, scope.context.revision);
-  return { ...dependencies, lead, scope, actions, prepareAction, tool, query, input, pending };
+  return { ...dependencies, lead, scope, actions, prepareAction, clearPendingAction, tool, query, input, pending };
 }
 
 describe('schedule_trial_class: proposta determinística sem reserva', () => {
@@ -168,9 +169,9 @@ describe('schedule_trial_class: proposta determinística sem reserva', () => {
     else expect(h.pending()).toBeNull();
   });
 
-  it('trata fuso incompatível como dado interno inválido, sem preparar prévia', async () => {
+  it('recusa referência de horário com fuso incompatível, sem preparar prévia', async () => {
     const h = await harness(slotFixtures.map((s) => s.slotId === slotId ? { ...s, timezone: 'UTC' } : s));
-    expect(await h.tool(h.input, h.scope)).toMatchObject({ error: { code: 'OPERATION_FAILED' } });
+    expect(await h.tool(h.input, h.scope)).toMatchObject({ error: { code: 'INVALID_INPUT' } });
     expect(h.prepareAction).not.toHaveBeenCalled();
   });
 
@@ -228,9 +229,9 @@ describe('schedule_trial_class: proposta determinística sem reserva', () => {
     const execute = vi.fn(async (action) => {
       expect(action).toMatchObject({ conversationId: h.scope.conversationId, revision: 8, kind: 'schedule_trial_class', args: expectedArgs });
       expect(action.preview).toEqual(snapshot?.preview);
-      throw new Error('Sem executor de reserva nesta task.');
+      throw new Error('Executor interrompido para inspecionar o snapshot.');
     });
-    await expect(h.actions.confirm(h.scope.conversationId, 8, publicCopy.actionId, execute)).rejects.toThrow('Sem executor');
+    await expect(h.actions.confirm(h.scope.conversationId, 8, publicCopy.actionId, execute)).rejects.toThrow('Executor interrompido');
     expect(execute).toHaveBeenCalledTimes(1);
     expect(h.pending()).toEqual(snapshot);
     expect(await h.trialClassRepository.findConfirmedBySlotId(slotId)).toBeNull();
@@ -246,5 +247,29 @@ describe('schedule_trial_class: proposta determinística sem reserva', () => {
     expect(await h.tool(h.input, h.scope)).toMatchObject({ error: { code: 'OPERATION_FAILED' } });
     expect(h.pending()).toEqual(previous);
     expect(h.prepareAction).toHaveBeenCalledTimes(1);
+  });
+
+  it('mesmo lead/slot retorna existing oficial sem preparar outra ação nem escrever novamente', async () => {
+    const h = await harness();
+    await h.tool(h.input, h.scope);
+    const reserved = await h.trialClassRepository.reserveSlot(h.input, now());
+    if (!('booking' in reserved)) throw new Error('Reserva esperada.');
+    const write = vi.spyOn(h.trialClassRepository, 'reserveSlot');
+    const result = await h.tool(h.input, h.scope);
+    expect(result).toEqual({ ok: true, data: { outcome: 'existing', booking: reserved.booking } });
+    expect(h.pending()).toBeNull();
+    expect(h.prepareAction).toHaveBeenCalledTimes(1);
+    expect(h.clearPendingAction).toHaveBeenCalledTimes(1);
+    expect(write).not.toHaveBeenCalled();
+    expect(await h.trialClassRepository.findConfirmedBySlotId(slotId)).toEqual(reserved.booking);
+  });
+
+  it('existing recupera o registro concluído mesmo após seu horário, sem nova reserva', async () => {
+    const h = await harness();
+    const saved = await h.trialClassRepository.reserveSlot(h.input, now());
+    if (!('booking' in saved)) throw new Error('Reserva esperada.');
+    const tool = createScheduleTrialClassTool({ ...h, now: () => new Date('2031-01-01T00:00:00Z') });
+    expect(await tool(h.input, h.scope)).toEqual({ ok: true, data: { outcome: 'existing', booking: saved.booking } });
+    expect(h.prepareAction).not.toHaveBeenCalled();
   });
 });

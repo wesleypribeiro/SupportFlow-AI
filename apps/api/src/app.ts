@@ -21,7 +21,7 @@ import type { LeadRepository } from './modules/language-school/domain/lead-repos
 import type { SchoolRepository } from './modules/language-school/domain/school-repository.js';
 import { InMemoryLeadRepository } from './modules/language-school/infrastructure/in-memory-lead-repository.js';
 import { createLeadTool } from './modules/language-school/infrastructure/lead-tool.js';
-import { createLeadConfirmationExecutor } from './modules/language-school/infrastructure/lead-confirmation.js';
+import { createLanguageSchoolConfirmationExecutor } from './modules/language-school/infrastructure/action-confirmation.js';
 import { leadFailure } from './modules/language-school/application/create-lead.js';
 import type { TrialClassRepository } from './modules/language-school/domain/trial-class-repository.js';
 import { InMemoryTrialClassRepository } from './modules/language-school/infrastructure/in-memory-trial-class-repository.js';
@@ -68,6 +68,7 @@ export function createApplication(environment: NodeJS.ProcessEnv, options: {
     prepareAction: (scope, preview) => {
       actions.prepare(scope.conversationId, scope.context.revision, { kind: 'schedule_trial_class', preview });
     },
+    clearPendingAction: (scope) => { actions.invalidateCurrent(scope.conversationId); },
   });
   const createLead = createLeadTool({
     schoolRepository, leadRepository,
@@ -79,7 +80,7 @@ export function createApplication(environment: NodeJS.ProcessEnv, options: {
   registerChatRoute(server, {
     conversations,
     actions,
-    executeAction: options.executeAction ?? createLeadConfirmationExecutor({ schoolRepository, leadRepository, conversations }),
+    executeAction: options.executeAction ?? createLanguageSchoolConfirmationExecutor({ schoolRepository, leadRepository, trialClassRepository, now, conversations }),
     runTurn: createChatRunner({
       model,
       instructions: languageSchoolInstructions,

@@ -74,16 +74,11 @@ describe('proposta de aula: vínculo, revisão e autorizações distintas', () =
     await expectNoBookings(app);
   });
 
-  it('mantém confirmação de reserva indisponível nesta etapa: erro controlado, sem recibo fictício', async () => {
+  it('mantém a proposta sem integrar tools de agenda ao chat normal', async () => {
     const app = application(new ScriptedChatModel([new AIMessage('Pode revisar a prévia.') ]));
     const current = await registeredConversation(app);
     const action = await proposal(app, current.id);
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const response = await confirm(app.server, current.id, action.actionId);
-      expect(response.statusCode).toBe(500);
-      expect(response.json()).toEqual({ error: { code: 'CHAT_ERROR', message: 'Não foi possível concluir o atendimento. Tente novamente.' } });
-      await expectNoBookings(app);
-    }
+    await expectNoBookings(app);
     expect(app.model.calls).toHaveLength(0);
     const chat = await app.server.inject({ method: 'POST', url: '/api/chat', payload: { conversationId: current.id, message: 'Pode continuar?' } });
     expect(chat.statusCode).toBe(200);
@@ -199,9 +194,10 @@ describe('proposta de aula: vínculo, revisão e autorizações distintas', () =
     expect(retry.json().results).toHaveLength(1);
     expect(app.model.calls).toHaveLength(0); expect(app.model.contextCalls).toHaveLength(0);
     await expectNoBookings(app);
-    // A proposta continua sem executor, não recebeu a autorização do cadastro.
-    expect((await confirm(app.server, current.id, action.actionId)).statusCode).toBe(500);
-    await expectNoBookings(app);
+    // Somente o ID específico da aula pode autorizar esta escrita.
+    const scheduled = await confirm(app.server, current.id, action.actionId);
+    expect(scheduled.statusCode).toBe(200);
+    expect(scheduled.json().results).toMatchObject([{ tool: 'schedule_trial_class', result: { ok: true, data: { outcome: 'created' } } }]);
   });
 
   it('uma nova proposta invalida a anterior, sem ocupar nenhuma das vagas', async () => {

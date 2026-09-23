@@ -6,7 +6,7 @@ import {
   trialClassPendingActionSchema,
   trialClassSchema,
 } from '@supportflow/contracts/language-school';
-import type { ScheduleTrialClassInput, ToolFailure, TrialClassPendingAction } from '@supportflow/contracts/language-school';
+import type { ScheduleTrialClassInput, ToolFailure, TrialClass, TrialClassPendingAction } from '@supportflow/contracts/language-school';
 import { conversationContextSchema } from '../domain/conversation-context.js';
 import type { ConversationContext } from '../domain/conversation-context.js';
 import type { LeadRepository } from '../domain/lead-repository.js';
@@ -36,11 +36,11 @@ export function trialClassFailure(
   return { ok: false, error: { code, message: messages[code] } };
 }
 
-// Apenas leituras e validação. A proposta não autoriza nem ocupa a vaga.
-export async function prepareTrialClassProposal(
+// Invariantes comuns da preparação e da confirmação. Não decide ocupação.
+export async function validateTrialClassReferences(
   dependencies: TrialClassProposalDependencies, scope: TrialClassScope, input: ScheduleTrialClassInput,
 ): Promise<{ ok: true; preview: TrialClassPreview } | ToolFailure> {
-  const { schoolRepository, leadRepository, trialClassRepository, now } = dependencies;
+  const { schoolRepository, leadRepository, trialClassRepository } = dependencies;
   const context = conversationContextSchema.parse(scope.context);
   if (context.leadId === null || input.leadId !== context.leadId) return trialClassFailure('NOT_FOUND');
   const lead = leadSchema.nullable().parse(await leadRepository.findByConversationId(scope.conversationId));
@@ -65,21 +65,33 @@ export async function prepareTrialClassProposal(
   if (slot.slotId !== input.slotId) throw new Error('Referência de horário incompatível.');
   if (slot.courseId !== course.id) return trialClassFailure('INVALID_INPUT');
   const school = schoolSchema.parse(await schoolRepository.getSchool());
-  if (slot.timezone !== school.timezone) throw new Error('Fuso incompatível com a escola.');
-  const currentInstant = now().getTime();
-  const startsAt = Date.parse(slot.startsAt);
-  if (!Number.isFinite(currentInstant) || !Number.isFinite(startsAt)) throw new Error('Instante inválido.');
-  if (startsAt <= currentInstant) return trialClassFailure('SLOT_UNAVAILABLE');
-
-  const booking = trialClassSchema.nullable().parse(await trialClassRepository.findConfirmedBySlotId(slot.slotId));
-  if (booking !== null) {
-    if (booking.slotId !== slot.slotId || booking.courseId !== course.id) throw new Error('Ocupação incompatível com o horário.');
-    return trialClassFailure('SLOT_UNAVAILABLE');
-  }
+  if (slot.timezone !== school.timezone) return trialClassFailure('INVALID_INPUT');
 
   // Projeção explícita do resumo oficial, sem preço/descrição extras no contrato.
   const preview = trialClassPendingActionSchema.shape.preview.parse({
     lead, course: { id: course.id, name: course.name, language: course.language, modality: course.modality, active: course.active }, slot,
   });
   return { ok: true, preview };
+}
+
+// Apenas leituras. Uma reserva já existente não requer outra autorização/escrita.
+export async function prepareTrialClassProposal(
+  dependencies: TrialClassProposalDependencies, scope: TrialClassScope, input: ScheduleTrialClassInput,
+): Promise<{ ok: true; decision: 'prepare'; preview: TrialClassPreview }
+  | { ok: true; decision: 'existing'; booking: TrialClass } | ToolFailure> {
+  const validated = await validateTrialClassReferences(dependencies, scope, input);
+  if (!validated.ok) return validated;
+  const { slot, lead } = validated.preview;
+  const booking = trialClassSchema.nullable().parse(await dependencies.trialClassRepository.findConfirmedBySlotId(slot.slotId));
+  if (booking !== null) {
+    if (booking.slotId !== slot.slotId || booking.courseId !== slot.courseId) throw new Error('Ocupação incompatível com o horário.');
+    return booking.leadId === lead.id
+      ? { ok: true, decision: 'existing', booking }
+      : trialClassFailure('SLOT_UNAVAILABLE');
+  }
+  const currentInstant = dependencies.now().getTime();
+  const startsAt = Date.parse(slot.startsAt);
+  if (!Number.isFinite(currentInstant) || !Number.isFinite(startsAt)) throw new Error('Instante inválido.');
+  if (startsAt <= currentInstant) return trialClassFailure('SLOT_UNAVAILABLE');
+  return { ok: true, decision: 'prepare', preview: validated.preview };
 }

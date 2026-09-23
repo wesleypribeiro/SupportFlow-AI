@@ -12,9 +12,10 @@ disponível internamente como `app.getAvailableSlots({ courseId })`, sem integra
 ao modelo ou à UI. A task 5.2 acrescenta `app.prepareTrialClass(conversationId,
 { leadId, slotId })`: valida cadastro/contexto e agenda, retornando
 `CONFIRMATION_REQUIRED` e uma prévia oficial, sem ocupar a vaga. Essa operação
-também permanece interna, sem registro no agente ou UI. A confirmação da aula
-ainda não possui executor de reserva: retorna `500 / CHAT_ERROR` controlado,
-sem recibo fictício. A gravação será implementada na task 5.3.
+também permanece interna, sem registro no agente ou UI. A task 5.3 implementa a
+reserva real em memória pelo `/api/chat/confirm`, com ocupação atômica por slot,
+resultados `created`/`existing`, conflito `SLOT_UNAVAILABLE` e recibos históricos.
+A integração da agenda ao agente e à UI permanece para a task 5.4.
 
 ## Executar localmente
 
@@ -140,7 +141,7 @@ Esses registros desaparecem ao reiniciar o processo.
 somente para composição interna, passando pela mesma fila das rotas, e aceita
 `executeAction` como dependência opcional. O executor recebe uma cópia da ação
 armazenada, inclusive seus argumentos e vínculo. O executor padrão cria ou atualiza
-somente o lead da conversa e reconhece dados já registrados. Reserva continua sem executor. A suíte da
+o lead da conversa ou confirma a aula, conforme o tipo da ação. A suíte da
 infraestrutura também injeta executores simulados compatíveis com os contratos.
 
 O recibo validado (`reply` e `results`) é salvo antes de construir/enviar a resposta
@@ -149,6 +150,12 @@ revisão atual, sem chamar novamente o executor, inclusive após falha de envio 
 mudança de contexto. O envelope continua mostrando a prévia **atualmente** pendente,
 quando existir outra; o recibo original não muda. Falha técnica antes de registrar
 um recibo válido retorna `500/CHAT_ERROR`. A UI oferece “Confirmar cadastro” somente para a prévia atual do backend.
+
+Na confirmação de aula, indisponibilidade é um resultado de negócio em `results`
+com HTTP 200, seguindo o fluxo de recibo definido na task 5.3. Esse recibo também
+é salvo; o retry do mesmo actionId não volta a disputar a vaga. Uma nova chamada
+para o mesmo lead/slot retorna `existing`; uma nova chamada de outro lead retorna
+`SLOT_UNAVAILABLE`. A consulta de horários passa a excluir a vaga ocupada.
 
 O backend oferece `prepareLead(conversationId, input)` para exercitar diretamente
 `create_lead`, dentro da fila da conversa. O retorno separa `result` de `pendingAction`.
