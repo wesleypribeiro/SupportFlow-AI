@@ -1,7 +1,7 @@
 import { createLeadInputSchema, createLeadResultSchema } from '@supportflow/contracts/language-school';
 import type { InMemoryConversations } from '../../../core/conversations.js';
 import type { ActionExecutor } from '../../../core/pending-actions.js';
-import { createFirstLead, leadFailure } from '../application/create-lead.js';
+import { confirmLeadRegistration, leadFailure } from '../application/create-lead.js';
 import type { ConversationContext } from '../domain/conversation-context.js';
 import type { LeadRepository } from '../domain/lead-repository.js';
 import type { SchoolRepository } from '../domain/school-repository.js';
@@ -21,17 +21,21 @@ export function createLeadConfirmationExecutor(composition: {
     // Falhas técnicas anteriores à escrita seguem o CHAT_ERROR da rota, sem
     // consumir a ação como concluída. A tool de preparação usa OPERATION_FAILED.
     const result = input.success
-      ? createLeadResultSchema.parse(await createFirstLead(composition, {
+      ? createLeadResultSchema.parse(await confirmLeadRegistration(composition, {
         conversationId: conversation.id, context: conversation.context,
       }, input.data))
       : leadFailure('INVALID_INPUT');
-    if (result.ok) {
+    if (result.ok && result.data.outcome === 'created') {
       composition.conversations.save({
         ...conversation, context: { ...conversation.context, leadId: result.data.lead.id },
       });
     }
     return {
-      reply: result.ok ? 'Cadastro realizado.' : result.error.message,
+      reply: result.ok ? {
+        created: 'Cadastro realizado.',
+        existing: 'Seus dados já estão cadastrados.',
+        updated: 'Cadastro atualizado.',
+      }[result.data.outcome] : result.error.message,
       results: [{ tool: 'create_lead', result: createLeadResultSchema.parse(result) }],
     };
   };

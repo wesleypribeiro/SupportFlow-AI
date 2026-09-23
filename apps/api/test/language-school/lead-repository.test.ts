@@ -64,4 +64,52 @@ describe('LeadRepository em memória', () => {
     await expect(repository.createForConversation('A', data)).rejects.toThrow();
     expect(await repository.findByConversationId('A')).toBeNull();
   });
+
+  it('atualiza o registro completo preservando o ID em múltiplas atualizações', async () => {
+    const repository = new InMemoryLeadRepository();
+    const created = leadSchema.parse(await repository.createForConversation('A', input()));
+    const first = await repository.updateForConversation('A', { ...input(), name: 'Ana Silva' });
+    const second = await repository.updateForConversation('A', { ...input(), name: 'Ana Silva', goal: null });
+    expect(first).toEqual({ ...input(), name: 'Ana Silva', id: created.id });
+    expect(second).toEqual({ ...input(), name: 'Ana Silva', goal: null, id: created.id });
+    expect(await repository.findByConversationId('A')).toEqual(second);
+  });
+
+  it('copia entrada e retorno do update e preserva o escopo de outras conversas', async () => {
+    const repository = new InMemoryLeadRepository();
+    const original = leadSchema.parse(await repository.createForConversation('A', input()));
+    const other = await repository.createForConversation('B', input());
+    const change = { ...input(), contact: { type: 'email' as const, value: 'novo@example.com' } };
+    const updated = await repository.updateForConversation('A', change);
+    if (!updated) throw new Error('Lead atualizado esperado.');
+    change.name = 'Alterado depois';
+    change.contact.value = 'entrada@example.com';
+    updated.contact.value = 'retorno@example.com';
+    expect(await repository.findByConversationId('A'))
+      .toEqual({ ...original, contact: { type: 'email', value: 'novo@example.com' } });
+    expect(await repository.findByConversationId('B')).toEqual(other);
+  });
+
+  it('update de conversa inexistente ou de um leadId não cria nem altera outro registro', async () => {
+    const repository = new InMemoryLeadRepository();
+    const lead = leadSchema.parse(await repository.createForConversation('A', input()));
+    expect(await repository.updateForConversation('B', input())).toBeNull();
+    expect(await repository.updateForConversation(lead.id, input())).toBeNull();
+    expect(await repository.findByConversationId('B')).toBeNull();
+    expect(await repository.findByConversationId('A')).toEqual(lead);
+  });
+
+  it.each([
+    { ...input(), contact: { type: 'email' as const, value: 'inválido' } },
+    { ...input(), id: 'outro_lead' },
+    { ...input(), conversationId: 'B' },
+    { ...input(), outcome: 'updated' },
+  ])('update inválido não substitui campos nem permite trocar ID/escopo: %j', async (data) => {
+    const repository = new InMemoryLeadRepository();
+    const original = await repository.createForConversation('A', input());
+    const other = await repository.createForConversation('B', input());
+    await expect(repository.updateForConversation('A', data)).rejects.toThrow();
+    expect(await repository.findByConversationId('A')).toEqual(original);
+    expect(await repository.findByConversationId('B')).toEqual(other);
+  });
 });

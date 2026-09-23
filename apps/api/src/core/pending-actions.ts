@@ -31,9 +31,7 @@ export class InMemoryPendingActions<Definition extends ActionDefinition, Receipt
     const action = {
       ...definition, actionId: randomUUID(), conversationId, revision,
     };
-    const previousId = this.current.get(conversationId);
-    const previous = previousId ? this.actions.get(previousId) : undefined;
-    if (previous?.status === 'pending') previous.status = 'stale';
+    this.invalidateCurrent(conversationId);
     this.actions.set(action.actionId, { action, status: 'pending' });
     this.current.set(conversationId, action.actionId);
     return this.publicPreview(action);
@@ -51,9 +49,16 @@ export class InMemoryPendingActions<Definition extends ActionDefinition, Receipt
     const id = this.current.get(conversationId);
     const action = id ? this.actions.get(id) : undefined;
     if (action?.status === 'pending' && action.action.revision !== revision) {
-      action.status = 'stale';
-      this.current.delete(conversationId);
+      this.invalidateCurrent(conversationId);
     }
+  }
+
+  // Retira uma prévia que deixou de exigir confirmação, preservando seu ID como stale.
+  invalidateCurrent(conversationId: string): void {
+    const id = this.current.get(conversationId);
+    const action = id ? this.actions.get(id) : undefined;
+    if (action?.status === 'pending') action.status = 'stale';
+    this.current.delete(conversationId);
   }
 
   // Executar sob runExclusive da conversa; a rota nunca consulta a LLM aqui.

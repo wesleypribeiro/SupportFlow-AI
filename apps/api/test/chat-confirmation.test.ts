@@ -16,7 +16,7 @@ const proposal = () => ({
   },
 });
 
-// Somente o teste simula uma escrita. Não existe LeadRepository nem executor de negócio na aplicação.
+// Executor simulado para testar o lifecycle sem executar as operações reais do módulo.
 function receipt(action: PreparedAction<LanguageSchoolAction>) {
   if (action.kind !== 'create_lead') throw new Error('Ação não preparada neste teste.');
   return {

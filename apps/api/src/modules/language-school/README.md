@@ -2,8 +2,9 @@
 
 Catálogo de leitura das tasks 2.2 e 2.3 de `language-school-sales-mvp`, conectado
 ao chat na task 3.1, com contexto vigente na task 3.2 e política de atendimento
-consolidada na task 3.4. A task 4.2 acrescenta a preparação de cadastro e a criação
-do primeiro lead por confirmação. Usa os contratos aprovados na task 2.1.
+consolidada na task 3.4. As tasks 4.2 e 4.3 acrescentam a preparação de cadastro,
+criação/atualização confirmadas e reconhecimento de lead idêntico sem escrita.
+Usa os contratos aprovados na task 2.1.
 
 ## Organização
 
@@ -157,7 +158,7 @@ Os testes usam o repositório em memória. Doubles e spies ficam restritos aos
 cenários de falha, implementação incompatível e ausência de consulta após entrada
 inválida. A suíte não chama rede ou modelos de linguagem.
 
-## Primeiro cadastro de lead — task 4.2
+## Política de cadastro de lead — tasks 4.2 e 4.3
 
 `domain/lead-repository.ts` define somente:
 
@@ -165,38 +166,59 @@ inválida. A suíte não chama rede ou modelos de linguagem.
 | --- | --- |
 | `findByConversationId(conversationId)` | `Promise<Lead \| null>` da própria conversa |
 | `createForConversation(conversationId, input)` | `Promise<Lead \| null>`; null se já existe lead, sem substituí-lo |
+| `updateForConversation(conversationId, input)` | `Promise<Lead \| null>`; substitui os dados completos preservando o ID; null se não há lead |
 
 `InMemoryLeadRepository` usa um Map por conversa e gera o ID no backend. Valida o
 registro inteiro antes de escrever, sem intercalar awaits na verificação/criação.
 Entrada e retornos são copiados defensivamente. Contatos iguais em conversas
-diferentes geram leads distintos. A atualização por conversa será acrescentada
-com a política da task 4.3; não há upsert, CRM ou busca global antecipados.
+diferentes geram leads distintos. No update, o ID é obtido do registro existente;
+input com ID é rejeitado. Não há await entre consulta e substituição do registro
+completo já validado, nem criação implícita no update. Não há upsert, CRM ou busca global.
 
 `application/create-lead.ts` separa duas operações determinísticas. A preparação
 valida os campos obrigatórios do contexto e compara nome, contato, curso e objetivo
-com o input, sem normalização. Consulta o curso ativo através da operação de catálogo
-e verifica se a conversa já tem lead. Retorna uma prévia formada dos dados oficiais
-do contexto. `createFirstLead` repete essas verificações antes da criação e retorna
-`created` exclusivamente com o registro salvo.
+com o input, sem normalização. Verifica a correspondência entre registro e
+`context.leadId`, consulta o curso ativo através da operação de catálogo e compara
+todos os dados do lead com o contexto. Retorna um plano de criação, atualização ou
+reconhecimento de dados idênticos. `confirmLeadRegistration` repete essas verificações
+antes de gravar. O backend decide os outcomes; input com `outcome` é rejeitado.
+
+| Estado validado | Chamada à tool | Confirmação |
+| --- | --- | --- |
+| Sem lead e `leadId: null` | Prévia + `CONFIRMATION_REQUIRED` | `created`, novo ID associado ao contexto |
+| Lead idêntico e ID coerente | `existing`, sem prévia/escrita | `existing`, sem escrita se houver ação a confirmar |
+| Lead diferente e mesmo ID coerente | Nova prévia + `CONFIRMATION_REQUIRED` | `updated`, mesmo ID |
+
+Nome, `contact.type`, `contact.value`, curso e objetivo são comparados exatamente.
+Não há merge direto do patch da LLM no repository. O update recebe os dados completos
+do contexto validado. `goal: null` é permitido quando já é o estado vigente; a política
+do interpretador não mudou (`null` no patch continua significando preservar).
 
 `infrastructure/lead-tool.ts` valida entrada/saída com os schemas existentes e
-encaminha a prévia à infraestrutura da 4.1. Retorna somente `CONFIRMATION_REQUIRED`,
-sem gravar. Na composição, `prepareLead(conversationId, input)` obtém o contexto
+encaminha a prévia à infraestrutura da 4.1 quando houver escrita a confirmar.
+Para `existing`, devolve o lead do repository e invalida eventual prévia redundante,
+mantendo o ID antigo como stale. Na composição, `prepareLead(conversationId, input)` obtém o contexto
 atual dentro da fila e retorna `{ result, pendingAction }`. O `conversationId` é
 um parâmetro separado do backend, nunca campo da entrada pública da tool.
 
 `infrastructure/lead-confirmation.ts` é o executor padrão para `create_lead`.
 Após vínculo e revisão serem verificados pelo core, usa os argumentos capturados,
-revalida o contexto/catálogo e cria o primeiro lead. Associa o ID salvo a `leadId`,
-sem incrementar revisão, dentro da mesma serialização. A infraestrutura conserva
+revalida contexto/catálogo e executa a decisão do caso de uso. Na criação associa o
+ID salvo a `leadId`; updates preservam esse ID e existing não faz escrita. Não há
+incremento de revisão por efeito da confirmação. A infraestrutura conserva
 o recibo antes do envio HTTP. Uma confirmação repetida devolve o snapshot anterior,
-inclusive depois de corrigir o contexto; não modifica o lead já salvo.
+inclusive depois de corrigir o contexto ou de concluir outro update. Um retry de
+`created` continua `created`; um retry de `updated` continua sendo aquele `updated`
+com os dados daquela ação. Não se reexecuta o cadastro para construir um recibo antigo.
+Uma correção só muda o contexto e torna a ação pendente anterior stale. O lead salvo
+permanece intacto até uma nova confirmação, e uma prévia nova invalida a pendente anterior.
 
 Mapeamento da preparação: entrada ou contexto incompletos/divergentes →
 `INVALID_INPUT`; curso ausente/inativo → `NOT_FOUND`; prévia preparada →
 `CONFIRMATION_REQUIRED`; exceção/saída interna incompatível → `OPERATION_FAILED`.
-Conversa já cadastrada também retorna `OPERATION_FAILED` com mensagem própria,
-sem aplicar `existing`/`updated`. Falhas esperadas na confirmação ficam no resultado
+Registro sem vínculo no contexto, ID divergente ou vínculo sem registro são
+inconsistências técnicas: não há correção automática nem escrita. Retornam
+`OPERATION_FAILED` na tool e `CHAT_ERROR` na confirmação. Falhas esperadas na confirmação ficam no resultado
 estruturado `create_lead` com HTTP 200, sem sucesso de negócio; falhas técnicas
 anteriores à escrita seguem `500/CHAT_ERROR` e mantêm a ação disponível para retry.
 As respostas não expõem detalhes internos. Apenas resultados concluídos são
@@ -208,5 +230,8 @@ rota de preparação foi criada e o prompt/UI não mudaram. A integração é da
 
 Os testes do repository, da tool e de confirmação verificam proposta sem escrita,
 contexto como autoridade, revisão, cópias defensivas, isolamento, revalidação do
-curso, falhas sem registro parcial e retry sem segundo cadastro. Todos são locais;
-as confirmações usam `server.inject()` e não consultam uma LLM.
+curso, falhas sem registro parcial e retry sem segundo cadastro. `lead-policy.test.ts`
+acrescenta updates por campo, existing sem escrita, revisões sucessivas, vínculo
+inconsistente e recibos históricos. Confirmar cadastro retorna exclusivamente
+`tool: create_lead`; não seleciona horário nem autoriza outra ação. Todos os testes
+são locais; as confirmações usam `server.inject()` e não consultam uma LLM.

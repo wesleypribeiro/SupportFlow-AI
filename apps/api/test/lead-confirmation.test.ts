@@ -210,8 +210,9 @@ describe('primeiro lead: proposta separada da confirmação HTTP', () => {
     expect((await confirm(app.server, current.id, pending.actionId)).json()).toEqual(first.json());
     expect(await app.leadRepository.findByConversationId(current.id)).toEqual(saved);
     const next = await app.prepareLead(current.id, { ...data(), goal: 'entrevistas' });
-    expect(next.result).toMatchObject({ ok: false, error: { code: 'OPERATION_FAILED' } });
-    expect(next.pendingAction).toBeNull();
+    expect(next.result).toMatchObject({ ok: false, error: { code: 'CONFIRMATION_REQUIRED' } });
+    expect(next.pendingAction?.preview).toEqual({ ...data(), goal: 'entrevistas' });
+    expect(await app.leadRepository.findByConversationId(current.id)).toEqual(saved);
   });
 
   it('mantém leads distintos com os mesmos dados e recusa confirmação de outra conversa', async () => {
@@ -234,16 +235,20 @@ describe('primeiro lead: proposta separada da confirmação HTTP', () => {
     expect(app.conversations.get(other.id)?.context.leadId).toBe(leadB?.id);
   });
 
-  it('não implementa política existing/updated ao confirmar uma nova ação em conversa com lead', async () => {
+  it('confirma uma nova ação com dados idênticos como existing sem duplicação', async () => {
     const app = application();
     const current = conversation(app);
     const first = leadPendingActionSchema.parse((await app.prepareLead(current.id, data())).pendingAction);
     await confirm(app.server, current.id, first.actionId);
     const saved = await app.leadRepository.findByConversationId(current.id);
     const second = await app.prepareAction(current.id, { kind: 'create_lead', preview: data() });
+    const create = vi.spyOn(app.leadRepository, 'createForConversation');
+    const update = vi.spyOn(app.leadRepository, 'updateForConversation');
     const response = await confirm(app.server, current.id, second.actionId);
-    expect(response.json().results[0].result).toMatchObject({ ok: false, error: { code: 'OPERATION_FAILED' } });
+    expect(response.json().results[0].result).toEqual({ ok: true, data: { outcome: 'existing', lead: saved } });
     expect(await app.leadRepository.findByConversationId(current.id)).toEqual(saved);
+    expect(create).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
   });
 
   it('mantém create_lead fora das ferramentas disponíveis ao modelo', async () => {

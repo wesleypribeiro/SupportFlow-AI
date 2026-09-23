@@ -2,10 +2,10 @@
 
 Fundação do MVP para escolas de idiomas, seguindo exclusivamente
 [`language-school-sales-mvp`](openspec/changes/language-school-sales-mvp/proposal.md).
-As tasks 1.1 a 4.2 entregam a fundação, os contratos públicos, o catálogo escolar
+As tasks 1.1 a 4.3 entregam a fundação, os contratos públicos, o catálogo escolar
 e a API de chat com histórico e contexto vigente em memória, além de três tools
 via LangChain, a interface de chat, a política de consultas por turno e a infraestrutura
-de ações pendentes com confirmação por IDs e o primeiro cadastro de lead confirmado.
+de ações pendentes com confirmação por IDs e a política de cadastro/revisão do lead.
 A integração do cadastro ao agente/UI e o agendamento ficam para as próximas tasks.
 
 ## Executar localmente
@@ -132,8 +132,8 @@ Esses registros desaparecem ao reiniciar o processo.
 `createApplication` oferece `prepareAction(conversationId, { kind, preview })`
 somente para composição interna, passando pela mesma fila das rotas, e aceita
 `executeAction` como dependência opcional. O executor recebe uma cópia da ação
-armazenada, inclusive seus argumentos e vínculo. O executor padrão agora cria
-somente o primeiro lead da conversa. Reserva continua sem executor. A suíte da
+armazenada, inclusive seus argumentos e vínculo. O executor padrão cria ou atualiza
+somente o lead da conversa e reconhece dados já registrados. Reserva continua sem executor. A suíte da
 infraestrutura também injeta executores simulados compatíveis com os contratos.
 
 O recibo validado (`reply` e `results`) é salvo antes de construir/enviar a resposta
@@ -148,20 +148,28 @@ O backend oferece `prepareLead(conversationId, input)` para exercitar diretament
 Esse método não é uma rota HTTP nem uma ferramenta registrada no modelo. Entrada
 estrita válida deve corresponder exatamente a nome, contato (`type` e `value`),
 curso e objetivo do contexto atual. O curso também deve continuar ativo no
-`SchoolRepository`. Preparar retorna `CONFIRMATION_REQUIRED` sem gravar lead.
+`SchoolRepository`. Cadastro inicial ou dados diferentes retornam
+`CONFIRMATION_REQUIRED` sem gravar. Dados idênticos retornam `existing` imediatamente,
+usando o registro do repository, sem ação pendente, escrita ou nova revisão.
+Uma prévia redundante é invalidada; seus IDs antigos continuam retornando `ACTION_STALE`.
 
 Na confirmação, o executor usa os argumentos armazenados, revalida contexto e
-catálogo, grava no `InMemoryLeadRepository` e retorna `outcome: created` com o
-registro salvo. O ID gerado pelo repository é associado a `context.leadId` dentro
-da mesma fila, sem alterar a revisão ou o histórico. Falha técnica anterior à
+catálogo e compara o lead da conversa com os dados vigentes completos. Sem lead,
+cria e retorna `created`; com dados diferentes, atualiza o mesmo ID e retorna
+`updated`; com dados idênticos, retorna `existing` sem escrita. Os resultados usam
+o registro oficial e passam por `createLeadResultSchema`. O ID criado é associado
+a `context.leadId` dentro da mesma fila, sem alterar a revisão ou o histórico. Falha técnica anterior à
 gravação retorna `CHAT_ERROR`, não consome um recibo e permite repetir a confirmação.
 Falhas de validação/referência retornam resultado estruturado de erro; não criam lead.
 
-O repository oferece consulta e criação por conversa, com cópias defensivas e
-recusa de uma segunda criação. Não há deduplicação por contato entre conversas.
-Nesta task, encontrar lead existente retorna `OPERATION_FAILED` sem substituí-lo:
-a política `existing`/`updated` e a operação de atualização por conversa serão
-completadas na 4.3. As três consultas de catálogo continuam sendo as únicas tools
+O repository oferece consulta, criação e atualização explícita por conversa, com
+cópias defensivas, recusa de uma segunda criação e preservação do ID no update.
+O registro inteiro é validado antes da substituição. Não há deduplicação por contato.
+Lead salvo e `context.leadId` devem corresponder, inclusive quanto à ausência;
+inconsistências retornam `OPERATION_FAILED` na tool ou `500/CHAT_ERROR` na confirmação,
+sem escrita nem recuperação automática. Corrigir contexto não edita o cadastro:
+exige nova prévia e confirmação. Retentar uma ação concluída retorna seu recibo
+histórico, sem consultar o estado atual para redefinir o outcome. As três consultas de catálogo continuam sendo as únicas tools
 vinculadas ao LangChain; o prompt e a UI permanecem sem integração de cadastro.
 
 Os testes usam barreiras de promises para comprovar a ordem correção → confirmação,

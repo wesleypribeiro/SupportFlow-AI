@@ -9,6 +9,7 @@ export function createLeadTool(composition: {
   schoolRepository: SchoolRepository;
   leadRepository: LeadRepository;
   prepareAction: (scope: LeadScope, preview: CreateLeadInput) => void;
+  clearPendingAction: (scope: LeadScope) => void;
 }) {
   // O escopo é um parâmetro do backend separado dos argumentos da tool.
   return async function create_lead(input: unknown, scope: LeadScope): Promise<CreateLeadResult> {
@@ -17,6 +18,11 @@ export function createLeadTool(composition: {
     try {
       const prepared = await prepareLeadRegistration(composition, scope, parsed.data);
       if (!prepared.ok) return createLeadResultSchema.parse(prepared);
+      if (prepared.decision === 'existing') {
+        const result = createLeadResultSchema.parse({ ok: true, data: { outcome: 'existing', lead: prepared.lead } });
+        composition.clearPendingAction(scope);
+        return result;
+      }
       composition.prepareAction(scope, prepared.preview);
       return createLeadResultSchema.parse(leadFailure('CONFIRMATION_REQUIRED'));
     } catch {

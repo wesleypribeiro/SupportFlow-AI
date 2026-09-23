@@ -19,4 +19,14 @@ export class InMemoryLeadRepository implements LeadRepository {
     this.leads.set(conversationId, structuredClone(lead));
     return structuredClone(lead);
   }
+
+  async updateForConversation(conversationId: string, input: CreateLeadInput): Promise<Lead | null> {
+    const data = createLeadInputSchema.parse(input);
+    const previous = this.leads.get(conversationId);
+    if (!previous) return null;
+    const lead = leadSchema.parse({ ...data, id: previous.id });
+    // Não há await entre leitura e substituição. O ID nunca vem do input.
+    this.leads.set(conversationId, structuredClone(lead));
+    return structuredClone(lead);
+  }
 }

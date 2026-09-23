@@ -5,4 +5,6 @@ export interface LeadRepository {
   findByConversationId(conversationId: string): Promise<Lead | null>;
   // Null indica que a conversa já tem lead. Nunca substitui o registro existente.
   createForConversation(conversationId: string, input: CreateLeadInput): Promise<Lead | null>;
+  // Substitui os dados completos preservando o ID; null se a conversa não tem lead.
+  updateForConversation(conversationId: string, input: CreateLeadInput): Promise<Lead | null>;
 }

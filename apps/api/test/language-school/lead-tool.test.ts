@@ -22,6 +22,7 @@ function harness(context: Partial<ConversationContext> = {}) {
   const create_lead = createLeadTool({
     schoolRepository, leadRepository,
     prepareAction: (current, preview) => { actions.prepare(current.conversationId, current.context.revision, { kind: 'create_lead', preview }); },
+    clearPendingAction: (current) => { actions.invalidateCurrent(current.conversationId); },
   });
   return { schoolRepository, leadRepository, actions, prepare, scope, create_lead };
 }
@@ -134,7 +135,7 @@ describe('create_lead: proposta validada sem escrita', () => {
     expect(h.prepare).not.toHaveBeenCalled();
   });
 
-  it('recusa um cadastro adicional sem antecipar existing/updated', async () => {
+  it('recusa inconsistência entre lead registrado e contexto sem vínculo', async () => {
     const h = harness();
     const saved = await h.leadRepository.createForConversation(h.scope.conversationId, data());
     expect(await h.create_lead(data(), h.scope)).toMatchObject({ ok: false, error: { code: 'OPERATION_FAILED' } });

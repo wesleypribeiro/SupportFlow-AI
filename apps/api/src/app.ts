@@ -55,6 +55,7 @@ export function createApplication(environment: NodeJS.ProcessEnv, options: {
     prepareAction: (scope, preview) => {
       actions.prepare(scope.conversationId, scope.context.revision, { kind: 'create_lead', preview });
     },
+    clearPendingAction: (scope) => { actions.invalidateCurrent(scope.conversationId); },
   });
   registerChatRoute(server, {
     conversations,
