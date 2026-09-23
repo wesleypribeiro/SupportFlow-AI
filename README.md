@@ -7,7 +7,9 @@ e a API de chat com histórico e contexto vigente em memória, além de quatro t
 via LangChain, a interface de chat, a política de consultas por turno e a infraestrutura
 de ações pendentes com confirmação por IDs e a política de cadastro/revisão do lead.
 O cadastro está integrado ao agente e à interface, com prévia e confirmação explícita.
-O agendamento continua reservado às próximas tasks.
+A task 5.1 acrescenta a consulta determinística de horários da agenda demonstrativa,
+disponível internamente como `app.getAvailableSlots({ courseId })`, sem integração
+ao modelo ou à UI. A criação de reservas fica para as próximas tasks.
 
 ## Executar localmente
 

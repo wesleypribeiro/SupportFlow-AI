@@ -23,6 +23,10 @@ import { InMemoryLeadRepository } from './modules/language-school/infrastructure
 import { createLeadTool } from './modules/language-school/infrastructure/lead-tool.js';
 import { createLeadConfirmationExecutor } from './modules/language-school/infrastructure/lead-confirmation.js';
 import { leadFailure } from './modules/language-school/application/create-lead.js';
+import type { TrialClassRepository } from './modules/language-school/domain/trial-class-repository.js';
+import { InMemoryTrialClassRepository } from './modules/language-school/infrastructure/in-memory-trial-class-repository.js';
+import { slotFixtures } from './modules/language-school/infrastructure/slot-fixtures.js';
+import { createAvailableSlotsTool } from './modules/language-school/infrastructure/available-slots-tool.js';
 
 // Composição explícita: o core não importa nem escolhe o segmento da aplicação.
 export function createApplication(environment: NodeJS.ProcessEnv, options: {
@@ -30,6 +34,8 @@ export function createApplication(environment: NodeJS.ProcessEnv, options: {
   executeAction?: ActionExecutor<LanguageSchoolAction>;
   schoolRepository?: SchoolRepository;
   leadRepository?: LeadRepository;
+  trialClassRepository?: TrialClassRepository;
+  now?: () => Date;
 } = {}) {
   const config = {
     ...loadCoreConfig(environment),
@@ -42,6 +48,10 @@ export function createApplication(environment: NodeJS.ProcessEnv, options: {
 
   const schoolRepository = options.schoolRepository ?? new InMemorySchoolRepository(schoolFixture, courseFixtures);
   const leadRepository = options.leadRepository ?? new InMemoryLeadRepository();
+  const trialClassRepository = options.trialClassRepository ?? new InMemoryTrialClassRepository(slotFixtures);
+  const getAvailableSlots = createAvailableSlotsTool({
+    schoolRepository, trialClassRepository, now: options.now ?? (() => new Date()),
+  });
   const catalogTools = createCatalogTools(schoolRepository);
   const langChainTools = createLangChainSchoolTools(catalogTools, { schoolRepository, leadRepository });
   const model = options.model ?? (config.llm
@@ -87,5 +97,5 @@ export function createApplication(environment: NodeJS.ProcessEnv, options: {
     return { result, pendingAction: actions.pending(conversationId, conversation.context.revision) };
   });
 
-  return { server, config, catalogTools, conversations, prepareAction, prepareLead };
+  return { server, config, catalogTools, conversations, prepareAction, prepareLead, getAvailableSlots };
 }

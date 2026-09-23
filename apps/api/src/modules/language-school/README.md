@@ -5,6 +5,8 @@ ao chat na task 3.1, com contexto vigente na task 3.2 e política de atendimento
 consolidada na task 3.4. As tasks 4.2 e 4.3 acrescentam a preparação de cadastro,
 criação/atualização confirmadas e reconhecimento de lead idêntico sem escrita.
 A task 4.4 conecta essa operação ao chat e à interface. Usa os contratos aprovados na task 2.1.
+A task 5.1 acrescenta a consulta de disponibilidade da agenda interna, ainda sem
+registro no LangChain nem seleção conversacional de horários.
 
 ## Organização
 
@@ -254,3 +256,74 @@ escopo/autorização, ToolMessages e resultados oficiais, ausência de escrita a
 da confirmação, existing, Sim, correção e ação antiga/estrangeira. Os testes de
 atomicidade provocam falha na redação com/sem ação anterior, resposta pública
 inválida e falha após existing, conservando histórico, contexto e lifecycle.
+
+## Consulta da agenda interna — task 5.1
+
+`domain/trial-class-repository.ts` oferece somente duas leituras:
+
+| Método | Retorno |
+| --- | --- |
+| `listSlotsByCourseId(courseId)` | `Promise<Slot[]>` cadastrados para o curso, sem filtrar por relógio |
+| `findConfirmedBySlotId(slotId)` | `Promise<TrialClass \| null>`; reserva confirmada ocupa a única vaga |
+
+`InMemoryTrialClassRepository` recebe slots e, opcionalmente, reservas iniciais.
+Valida os schemas e mantém cópias defensivas de entradas e saídas. A ocupação usa
+um Map por `slotId`, dentro da mesma instância da agenda. Não há método de escrita,
+geração de ID, bloqueio ou criação de reserva durante uma consulta. A futura
+operação atômica poderá consultar e gravar nesse mesmo estado, sem substituir as
+leituras atuais; ela ainda não está implementada.
+
+`application/get-available-slots.ts` reutiliza `getCourseDetails` para verificar o
+curso ativo antes de acessar a agenda. Valida os registros retornados, preserva
+somente o curso pedido, exige o fuso cadastrado da escola e inclui apenas slots
+com `Date.parse(startsAt) > now().getTime()` e nenhuma reserva confirmada. O relógio
+é lido uma vez por consulta, antes da leitura da agenda. Comparações usam instantes
+absolutos, incluindo offsets distintos; o resultado conserva o ISO e o fuso originais.
+
+**Decisão de apresentação:** os slots são ordenados cronologicamente, em ordem
+crescente do instante absoluto. Essa ordenação não depende da ordem das fixtures
+nem modifica o armazenamento. Dado interno inválido ou fuso incompatível interrompe
+a consulta como falha controlada, sem publicar disponibilidade parcial.
+
+`infrastructure/available-slots-tool.ts` implementa `get_available_slots` com os
+schemas públicos existentes. Input inválido produz `INVALID_INPUT`; curso ausente
+ou inativo, `NOT_FOUND`; falha técnica/saída inválida, `OPERATION_FAILED`, sem expor
+exceções. Curso sem vagas produz sucesso com `slots: []`.
+
+A composição instancia o repository e expõe a operação interna
+`app.getAvailableSlots({ courseId })`. Aceita `trialClassRepository` e `now: () => Date`
+como overrides; somente a composição usa `() => new Date()` por padrão. Não foi
+adicionado endpoint, registro LangChain, instrução de prompt ou componente de UI.
+A consulta não recebe conversa, contexto, lead, ação ou executor de confirmação.
+`context.slotId` permanece como antes e nenhum resultado se transforma em reserva.
+
+### Fixtures e relógio de referência
+
+`infrastructure/slot-fixtures.ts` contém datas fixas, sem geração ou deslocamento
+dinâmico. Os cenários abaixo usam **2030-06-10T12:00:00Z** como relógio injetado.
+Todos os registros têm `timezone: America/Sao_Paulo`, igual à escola fictícia.
+
+| slotId | courseId | startsAt cadastrado | Cenário com relógio fixo |
+| --- | --- | --- | --- |
+| `slot_english_a` | `course_english_travel` | `2030-06-11T10:00:00-03:00` | Futuro livre A |
+| `slot_english_b` | `course_english_travel` | `2030-06-12T14:00:00-03:00` | Futuro livre B |
+| `slot_english_past` | `course_english_travel` | `2030-06-09T10:00:00-03:00` | Passado |
+| `slot_english_occupied` | `course_english_travel` | `2030-06-11T09:00:00-03:00` | Ocupado quando injetada a reserva fixture |
+| `slot_spanish_past` | `course_spanish_conversation` | `2030-06-09T15:00:00-03:00` | Curso sem vagas futuras |
+| `slot_french_a` | `course_french_intro` | `2030-06-11T11:00:00-03:00` | Futuro livre de outro curso |
+
+`trialClassFixtures` contém `trial_demo_occupied`, associado a `lead_demo_occupied`
+e `slot_english_occupied`, com `status: confirmed` e os mesmos curso/ISO/fuso do slot.
+É somente estado inicial fictício para testes; nenhum lead é criado por ele.
+A composição normal começa com reservas vazias. Portanto, inclusive esse slot fica
+livre até existir ocupação real; o sufixo do ID não determina disponibilidade.
+
+Na aplicação normal, passado/futuro seguem o relógio real. As datas não são
+adaptadas ao dia atual: poderão deixar de ser futuras, retornando lista vazia.
+Os testes sempre injetam um instante fixo e não dependem da data da execução.
+
+Os testes de repository, caso de uso/tool e composição cobrem isolamento por curso,
+cópias defensivas, ocupação inicial, passado/agora/futuro, offsets distintos,
+ordenação, lista vazia, validação de contratos e falhas sanitizadas. Consultas
+repetidas preservam as vagas livres, reservas, IDs, lead e contexto; nenhum estado
+de ação/confirmador é acessado e nenhuma LLM ou rede é necessária.
