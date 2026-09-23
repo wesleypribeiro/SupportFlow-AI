@@ -7,6 +7,7 @@ criação/atualização confirmadas e reconhecimento de lead idêntico sem escri
 A task 4.4 conecta essa operação ao chat e à interface. Usa os contratos aprovados na task 2.1.
 A task 5.1 acrescenta a consulta de disponibilidade da agenda interna, ainda sem
 registro no LangChain nem seleção conversacional de horários.
+A task 5.2 acrescenta somente a proposta determinística de aula experimental.
 
 ## Organização
 
@@ -259,11 +260,12 @@ inválida e falha após existing, conservando histórico, contexto e lifecycle.
 
 ## Consulta da agenda interna — task 5.1
 
-`domain/trial-class-repository.ts` oferece somente duas leituras:
+`domain/trial-class-repository.ts` oferece somente leituras:
 
 | Método | Retorno |
 | --- | --- |
 | `listSlotsByCourseId(courseId)` | `Promise<Slot[]>` cadastrados para o curso, sem filtrar por relógio |
+| `findSlotById(slotId)` | `Promise<Slot \| null>`; leitura por ID adicionada na 5.2, com cópia defensiva |
 | `findConfirmedBySlotId(slotId)` | `Promise<TrialClass \| null>`; reserva confirmada ocupa a única vaga |
 
 `InMemoryTrialClassRepository` recebe slots e, opcionalmente, reservas iniciais.
@@ -327,3 +329,67 @@ cópias defensivas, ocupação inicial, passado/agora/futuro, offsets distintos,
 ordenação, lista vazia, validação de contratos e falhas sanitizadas. Consultas
 repetidas preservam as vagas livres, reservas, IDs, lead e contexto; nenhum estado
 de ação/confirmador é acessado e nenhuma LLM ou rede é necessária.
+
+## Proposta de aula experimental — task 5.2
+
+`application/prepare-trial-class.ts` valida uma proposta sem escrever. Recebe
+`conversationId` e `ConversationContext` do backend, as três interfaces de
+repository e o mesmo `now: () => Date` usado na disponibilidade. Consulta o lead
+exclusivamente pela conversa; exige vínculo com `context.leadId` e igualdade exata
+de nome, tipo/valor do contato, curso e objetivo. Divergência exige revisão e
+confirmação da atualização de cadastro; não atualiza o lead automaticamente.
+
+O curso é revalidado por `getCourseDetails`. O slot é consultado por ID, deve
+corresponder ao curso atual e ao fuso da escola, ter instante estritamente maior
+que o relógio injetado e não possuir reserva confirmada. Esta leitura de ocupação
+não garante disponibilidade na confirmação: a operação atômica pertence à 5.3.
+
+Se `context.slotId` estiver definido, deve ser idêntico ao argumento. Se for
+`null`, a proposta valida o slot fornecido contra a agenda e preserva o contexto
+sem preenchê-lo, seguindo a condição explícita da task. Nenhuma interpretação
+natural de horário foi acrescentada. Curso corrigido pelo fluxo existente limpa
+a seleção incompatível e incrementa a revisão; os testes de troca de horário
+fornecem estado interno validado com a nova revisão.
+
+`infrastructure/trial-class-tool.ts` recebe somente `{ leadId, slotId }` como
+entrada pública. Usa `scheduleTrialClassInputSchema` e
+`scheduleTrialClassResultSchema`, sem coerção ou campos extras. O escopo do backend
+é um parâmetro separado. Não foi registrada uma quinta tool no LangChain.
+
+A prévia `{ lead, course, slot }` é validada pelo contrato existente. `lead` e
+`slot` são registros oficiais; `course` projeta somente os campos do resumo ativo
+do catálogo. Não há informações extraídas da prosa. A infraestrutura existente
+deriva `{ leadId, slotId }` desses dados, captura cópias e associa conversa/revisão.
+A preparação gera `CONFIRMATION_REQUIRED`; nenhuma `TrialClass`, ID de reserva
+ou ocupação é criada. `get_available_slots` continua mostrando a mesma vaga.
+
+| Condição | Resultado público |
+| --- | --- |
+| Input extra/inválido, slot diferente da seleção ou referências de cursos incompatíveis | `INVALID_INPUT` |
+| Cadastro divergente do contexto | `INVALID_INPUT`, orientando confirmar a atualização do cadastro |
+| Lead/context.leadId ausente, ID do lead diferente, conversa/curso/slot inexistente ou curso inativo | `NOT_FOUND`, sem dados de outra conversa |
+| Slot passado, exatamente no instante atual ou ocupado | `SLOT_UNAVAILABLE` |
+| Proposta válida | `CONFIRMATION_REQUIRED` e prévia separada |
+| Falha técnica, vínculo interno incoerente, schema inválido ou fuso incompatível com a escola | `OPERATION_FAILED`, sem detalhes internos |
+
+`app.prepareTrialClass(conversationId, input)` usa a mesma fila local de chat e
+confirmação. Lê o contexto atual dentro da fila e prepara a ação somente após
+validar todos os registros. Não adiciona endpoint. Uma falha de validação não
+substitui a ação anterior. A nova proposta bem-sucedida torna a anterior stale;
+revisão diferente também impede executá-la. Mensagens sem mudança conservam a
+ação; “Sim” continua sem autorizar nada.
+
+`POST /api/chat/confirm` permanece restrito aos dois IDs. Ação estrangeira/ausente
+retorna 404 e stale retorna 409. Repetir o ID de um cadastro concluído devolve seu
+recibo de `create_lead`, mantendo a proposta de aula pendente. Não há executor de
+reserva nesta task: confirmar uma proposta de aula ainda válida retorna
+`500 / CHAT_ERROR` controlado e a ação permanece pendente, sem sucesso fictício.
+
+O ID `slot_english_occupied` foi preservado para evitar renomear fixtures e testes.
+Ocupação é decidida exclusivamente pelas reservas, nunca pelo nome do slot.
+
+Os testes adicionados cobrem entradas estritas, cadastro desatualizado/estrangeiro,
+catálogo, instante absoluto com offsets, ocupação, prévia oficial e imutabilidade.
+Com `server.inject()` e modelo simulado, verificam revisão por nome/contato/objetivo/
+curso/horário, ausência de mudança, isolamento, recibo de cadastro independente e
+ausência de execução de reserva. Não precisam de rede ou credenciais.

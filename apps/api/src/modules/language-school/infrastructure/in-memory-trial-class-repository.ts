@@ -21,4 +21,9 @@ export class InMemoryTrialClassRepository implements TrialClassRepository {
     const booking = this.bookingsBySlot.get(slotId);
     return booking ? structuredClone(booking) : null;
   }
+
+  async findSlotById(slotId: string): Promise<Slot | null> {
+    const slot = this.slots.find((entry) => entry.slotId === slotId);
+    return slot ? structuredClone(slot) : null;
+  }
 }

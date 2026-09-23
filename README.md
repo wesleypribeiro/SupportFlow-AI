@@ -9,7 +9,12 @@ de ações pendentes com confirmação por IDs e a política de cadastro/revisã
 O cadastro está integrado ao agente e à interface, com prévia e confirmação explícita.
 A task 5.1 acrescenta a consulta determinística de horários da agenda demonstrativa,
 disponível internamente como `app.getAvailableSlots({ courseId })`, sem integração
-ao modelo ou à UI. A criação de reservas fica para as próximas tasks.
+ao modelo ou à UI. A task 5.2 acrescenta `app.prepareTrialClass(conversationId,
+{ leadId, slotId })`: valida cadastro/contexto e agenda, retornando
+`CONFIRMATION_REQUIRED` e uma prévia oficial, sem ocupar a vaga. Essa operação
+também permanece interna, sem registro no agente ou UI. A confirmação da aula
+ainda não possui executor de reserva: retorna `500 / CHAT_ERROR` controlado,
+sem recibo fictício. A gravação será implementada na task 5.3.
 
 ## Executar localmente
 

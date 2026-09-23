@@ -1,6 +1,6 @@
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import { ChatOpenAI } from '@langchain/openai';
-import { createLeadResultSchema, languageSchoolChatResponseSchema } from '@supportflow/contracts/language-school';
+import { createLeadResultSchema, languageSchoolChatResponseSchema, scheduleTrialClassResultSchema } from '@supportflow/contracts/language-school';
 import { registerChatRoute } from './core/chat-route.js';
 import { createChatRunner } from './core/chat.js';
 import { loadCoreConfig } from './core/config.js';
@@ -27,6 +27,8 @@ import type { TrialClassRepository } from './modules/language-school/domain/tria
 import { InMemoryTrialClassRepository } from './modules/language-school/infrastructure/in-memory-trial-class-repository.js';
 import { slotFixtures } from './modules/language-school/infrastructure/slot-fixtures.js';
 import { createAvailableSlotsTool } from './modules/language-school/infrastructure/available-slots-tool.js';
+import { createScheduleTrialClassTool } from './modules/language-school/infrastructure/trial-class-tool.js';
+import { trialClassFailure } from './modules/language-school/application/prepare-trial-class.js';
 
 // Composição explícita: o core não importa nem escolhe o segmento da aplicação.
 export function createApplication(environment: NodeJS.ProcessEnv, options: {
@@ -49,8 +51,9 @@ export function createApplication(environment: NodeJS.ProcessEnv, options: {
   const schoolRepository = options.schoolRepository ?? new InMemorySchoolRepository(schoolFixture, courseFixtures);
   const leadRepository = options.leadRepository ?? new InMemoryLeadRepository();
   const trialClassRepository = options.trialClassRepository ?? new InMemoryTrialClassRepository(slotFixtures);
+  const now = options.now ?? (() => new Date());
   const getAvailableSlots = createAvailableSlotsTool({
-    schoolRepository, trialClassRepository, now: options.now ?? (() => new Date()),
+    schoolRepository, trialClassRepository, now,
   });
   const catalogTools = createCatalogTools(schoolRepository);
   const langChainTools = createLangChainSchoolTools(catalogTools, { schoolRepository, leadRepository });
@@ -60,6 +63,12 @@ export function createApplication(environment: NodeJS.ProcessEnv, options: {
   const server = createServer();
   const conversations = new InMemoryConversations(createConversationContext);
   const actions = createLanguageSchoolPendingActions();
+  const scheduleTrialClass = createScheduleTrialClassTool({
+    schoolRepository, leadRepository, trialClassRepository, now,
+    prepareAction: (scope, preview) => {
+      actions.prepare(scope.conversationId, scope.context.revision, { kind: 'schedule_trial_class', preview });
+    },
+  });
   const createLead = createLeadTool({
     schoolRepository, leadRepository,
     prepareAction: (scope, preview) => {
@@ -97,5 +106,13 @@ export function createApplication(environment: NodeJS.ProcessEnv, options: {
     return { result, pendingAction: actions.pending(conversationId, conversation.context.revision) };
   });
 
-  return { server, config, catalogTools, conversations, prepareAction, prepareLead, getAvailableSlots };
+  // Proposta direta sob a fila da conversa; não conecta a tool ao agente nem executa reserva.
+  const prepareTrialClass = (conversationId: string, input: unknown) => conversations.runExclusive(conversationId, async () => {
+    const conversation = conversations.get(conversationId);
+    if (!conversation) return { result: scheduleTrialClassResultSchema.parse(trialClassFailure('NOT_FOUND')), pendingAction: null };
+    const result = await scheduleTrialClass(input, { conversationId, context: conversation.context });
+    return { result, pendingAction: actions.pending(conversationId, conversation.context.revision) };
+  });
+
+  return { server, config, catalogTools, conversations, prepareAction, prepareLead, prepareTrialClass, getAvailableSlots };
 }

@@ -5,6 +5,19 @@ import { InMemoryTrialClassRepository } from '../../src/modules/language-school/
 import { slotFixtures, trialClassFixtures } from '../../src/modules/language-school/infrastructure/slot-fixtures.js';
 
 describe('agenda em memória: somente leitura', () => {
+  it('localiza slot por ID sem ocupá-lo e devolve cópia defensiva ou null', async () => {
+    const slots = structuredClone([...slotFixtures]);
+    const repository = new InMemoryTrialClassRepository(slots);
+    const expected = structuredClone(slots[0]!);
+    slots[0]!.timezone = 'UTC';
+    const found = await repository.findSlotById(expected.slotId);
+    expect(found).toEqual(expected);
+    found!.startsAt = '2040-01-01T00:00:00Z';
+    expect(await repository.findSlotById(expected.slotId)).toEqual(expected);
+    expect(await repository.findSlotById('slot_missing')).toBeNull();
+    expect(await repository.findConfirmedBySlotId(expected.slotId)).toBeNull();
+  });
+
   it('fixtures têm contratos válidos, cursos existentes e o fuso da escola', () => {
     expect(slotSchema.array().parse(slotFixtures)).toEqual(slotFixtures);
     expect(trialClassSchema.array().parse(trialClassFixtures)).toEqual(trialClassFixtures);
