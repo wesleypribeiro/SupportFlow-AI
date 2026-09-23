@@ -1,6 +1,6 @@
 # Chat da demonstração
 
-A task 3.3 usa o App Router do Next.js com estado local no componente `Chat`.
+A interface das tasks 3.3 e 4.4 usa o App Router do Next.js com estado local no componente `Chat`.
 Execute `npm run dev` na raiz e abra `http://127.0.0.1:3000`. O modelo e suas
 credenciais são configurados exclusivamente na API; sem modelo, a interface
 apresenta o erro controlado do backend e permite tentar novamente.
@@ -8,13 +8,17 @@ apresenta o erro controlado do backend e permite tentar novamente.
 ## Organização
 
 - `src/app/chat.tsx`: histórico visual por turno, rascunho, ID da conversa, envio e
-  erro recuperável. Um ref bloqueia submits simultâneos antes do próximo render.
+  erro recuperável e prévia atual. Um ref compartilhado bloqueia mensagens e
+  confirmações simultâneas antes do próximo render.
 - `src/app/chat-api.ts`: envia somente `{ message, conversationId? }` para
   `/api/chat` e valida a resposta com os schemas públicos Zod. Mensagens de erro
-  para o visitante são locais e não exibem detalhes internos recebidos.
+  para o visitante são locais; 404 de confirmação usa a mensagem pública validada
+  como texto. O helper `confirmChatAction` envia somente conversationId/actionId.
 - `src/app/catalog-results.tsx`: apresenta escola, lista e detalhes exclusivamente
   dos resultados estruturados; formata centavos para BRL sem modificar os dados.
-- `next.config.ts`: encaminha `/api/chat` para `http://127.0.0.1:3001/api/chat`.
+- `src/app/lead-results.tsx`: prévia e recibos de cadastro vindos exclusivamente
+  de `pendingAction` e `results`.
+- `next.config.ts`: encaminha `/api/chat` e `/api/chat/confirm` para o Fastify em `127.0.0.1:3001`.
   Não há API Route do Next nem configuração de LLM no frontend.
 
 O primeiro envio omite `conversationId`. Após uma resposta válida, o ID retornado
@@ -25,7 +29,7 @@ o contexto interno do backend não é copiado. Recarregar a página ou escolher
 `reply` é texto simples. Somente `results` preenche os cards oficiais; não há
 extração de fatos ou estados de operação da prosa. A lista contém os resumos que
 a API fornece; os preços aparecem nos detalhes. `null` significa “Preço não
-informado”, enquanto zero é mostrado como `R$ 0,00`. Não existem ações de confirmação.
+informado”, enquanto zero é mostrado como `R$ 0,00`.
 
 Erros de rede, HTTP e resposta inválida preservam o rascunho. Reenviar o mesmo
 texto falho reutiliza o turno visual, sem duplicar a mensagem. `404/NOT_FOUND`
@@ -34,7 +38,7 @@ para envio sem aquele ID. Uma falha não cria resposta fictícia do assistente.
 
 ## Testes e verificação visual
 
-`npm test` executa 21 testes de interface no mesmo Vitest do projeto, usando
+`npm test` executa os testes de interface no mesmo Vitest do projeto, usando
 jsdom, Testing Library e user-event. O `fetch` é substituído por respostas
 determinísticas; não são necessários navegador instalado, servidor, rede externa
 ou credenciais para a suíte obrigatória. Os testes cobrem contratos, teclado,
@@ -60,3 +64,47 @@ como dependência ou requisito da suíte.
 
 A avaliação em tela estreita foi feita no Chromium com viewport reduzido, sem
 dispositivo físico ou teclado virtual móvel. Não houve chamadas reais à OpenAI.
+
+## Prévia e confirmação do cadastro
+
+`currentPendingAction` é um estado local explícito substituído a cada resposta
+válida do backend. Exibimos somente a prévia atual, com nome, contato, identificador
+do curso e objetivo. O contrato não fornece o nome do curso nessa prévia; nenhum
+nome é inferido da prosa. Enviar uma correção bloqueia o botão até a resposta: mesmo
+ID reabilita, novo ID substitui, null remove. Se o turno falhar, conserva a prévia.
+
+“Confirmar cadastro” envia somente `{ conversationId, actionId }`, sem os dados da
+prévia. Durante a confirmação, o composer e o botão ficam desabilitados. O sucesso
+adiciona a prosa e o recibo oficial ao histórico e atualiza a ação atual. `created`,
+`updated` e `existing` têm apresentação própria, sem interpretar a prosa como sucesso.
+`CONFIRMATION_REQUIRED` apenas informa a necessidade de revisão, sem criar recibo.
+
+`409/ACTION_STALE` remove a confirmação antiga e permite continuar conversando.
+Falha de rede, 500 ou envelope inválido conserva a mesma ação e oferece “Tentar
+confirmar novamente”, enviando exatamente o mesmo ID. O backend pode já ter gravado;
+o retry recupera o recibo salvo, sem consultar o chat. 404 informa indisponibilidade
+e oferece uma nova conversa; a UI não tenta distinguir ação desconhecida de conversa
+removida, pois o contrato intencionalmente não revela essa diferença.
+
+## Verificação da task 4.4
+
+Revisão em Chromium local via Playwright, com inspeção das capturas, Next.js real
+encaminhando para Fastify e `ScriptedChatModel` (sem OpenAI). O script temporário
+não foi adicionado à suíte nem às dependências de produção.
+
+- Catálogo, coleta de nome/contato/curso e prévia oficial conferidos.
+- Enter envia, Shift+Enter insere linha, botão acessível por foco e processamento
+  bloqueia novas operações.
+- Corrigir email substituiu a única prévia visível. Confirmar o ID antigo via HTTP
+  retornou 409; o novo ID criou somente o lead com contato corrigido.
+- Nova correção de objetivo produziu updated com o mesmo lead ID. Foi simulada perda
+  da resposta **após** o Fastify gravar: o retry enviou os mesmos IDs e recuperou um
+  recibo exatamente igual. Nova chamada com dados idênticos retornou existing sem botão.
+- Desktop 1360×900, viewports 390×844 e 320×740: campos, botão, erro e recibos legíveis,
+  rolagem do histórico e ausência de transbordamento horizontal. Sem dispositivo
+  físico/teclado virtual móvel; nenhum erro de execução no browser.
+
+`chat-lead.test.tsx` adiciona cobertura determinística para prévia oficial, prosa
+divergente, null no objetivo, created/updated/existing, corpo somente com IDs,
+clique duplo, exclusão mútua entre chat e confirmação, mesma/nova/nenhuma ação,
+409, 404, rede/500/envelope inválido e retry com o mesmo ID.

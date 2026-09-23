@@ -69,6 +69,11 @@ h1 { font-size: 23px; line-height: 1.2; }
 .price span { font-size: 12px; color: var(--muted); }
 .price-unavailable { margin-top: 18px; font-size: 13px; font-weight: 700; }
 .result-notice { border-left: 3px solid var(--line); padding: 8px 12px; color: var(--muted); }
+.lead-preview, .lead-receipt, .lead-notice { margin-top: 20px; overflow-wrap: anywhere; }
+.lead-preview { border-color: var(--pine); background: var(--canvas); font-size: 14px; line-height: 1.6; }
+.lead-preview h2 { font-size: 22px; margin-bottom: 8px; }
+.lead-preview .send-button { margin-top: 20px; white-space: normal; }
+.registration-note { font-size: 12px; margin-top: 14px; color: var(--muted); }
 .processing { display: flex; align-items: center; gap: 9px; padding: 22px 0 4px; color: var(--muted); font-size: 13px; }
 .loading-dot { width: 7px; height: 7px; background: var(--pine); border-radius: 50%; animation: pulse 1s ease-in-out infinite alternate; }
 @keyframes pulse { to { opacity: .25; } }

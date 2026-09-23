@@ -4,7 +4,7 @@ Catálogo de leitura das tasks 2.2 e 2.3 de `language-school-sales-mvp`, conecta
 ao chat na task 3.1, com contexto vigente na task 3.2 e política de atendimento
 consolidada na task 3.4. As tasks 4.2 e 4.3 acrescentam a preparação de cadastro,
 criação/atualização confirmadas e reconhecimento de lead idêntico sem escrita.
-Usa os contratos aprovados na task 2.1.
+A task 4.4 conecta essa operação ao chat e à interface. Usa os contratos aprovados na task 2.1.
 
 ## Organização
 
@@ -21,6 +21,8 @@ Usa os contratos aprovados na task 2.1.
   conversão de falhas para resultados públicos.
 - `infrastructure/langchain-catalog-tools.ts`: adaptação das três consultas para
   tool calling, sem mudar domínio, casos de uso ou repositório.
+- `infrastructure/langchain-tools.ts`: combina catálogo e `create_lead`, com escopo
+  de execução fornecido pelo backend e propostas locais ao turno.
 - `infrastructure/langchain-context.ts`: interpretação estruturada pelo mesmo modelo
   e descrição do contexto vigente para o atendimento.
 - `prompt.ts`: política de conversa, consulta de fatos do catálogo e tratamento de
@@ -82,8 +84,10 @@ com consultas. Dependências ainda ausentes são resolvidas em turnos posteriore
 Textos de escola, cursos e erros permanecem no conteúdo estruturado de mensagens
 com papel `tool`; não se tornam mensagens de sistema nem modificam as ferramentas
 disponíveis. A prosa não altera `results`, cria recibos ou autoriza operações.
-O prompt proíbe afirmar cadastro, agendamento, reserva ou transferência concluídos
-nesta etapa do agente, que ainda recebe somente as tools de leitura de catálogo.
+O prompt orienta coleta de dados faltantes, uso do contexto vigente no cadastro e
+revisão da prévia com o botão. Uma tool call ou “Sim” não autoriza escrita. Apenas
+resultados oficiais permitem explicar cadastro concluído; agendamento, reserva e
+transferência continuam indisponíveis.
 
 `chat-policy.test.ts` usa `ScriptedChatModel`, os adapters reais e `server.inject()`:
 verifica objetivo sem consulta, catálogo seguido de detalhes por ID oficial,
@@ -225,8 +229,17 @@ As respostas não expõem detalhes internos. Apenas resultados concluídos são
 conservados pela infraestrutura de recibos.
 
 O caso de uso não conhece LangChain, Fastify ou implementações de repositório.
-O core não conhece lead. Nenhuma tool de cadastro foi vinculada ao modelo, nenhuma
-rota de preparação foi criada e o prompt/UI não mudaram. A integração é da 4.4.
+O core não conhece lead. Na integração da 4.4, o runner passa um escopo genérico
+com conversa, cópia do contexto e callback de proposta. O adapter compõe a tool com
+esse escopo, mantendo `createLeadInputSchema` como única entrada visível ao modelo.
+Não há rota adicional de preparação.
+
+O callback da tool no chat somente guarda uma proposta local; não chama `prepare`
+nem invalida ações globais. A redação precisa terminar e o envelope precisa ser
+validado antes do commit síncrono de contexto, histórico e ação. `existing` propõe
+retirar a prévia apenas no commit. Uma falha conserva inclusive a ação anterior.
+O acesso interno direto `prepareLead` mantém sua preparação imediata dentro da fila;
+o caminho conversacional usa staging para preservar a atomicidade do turno.
 
 Os testes do repository, da tool e de confirmação verificam proposta sem escrita,
 contexto como autoridade, revisão, cópias defensivas, isolamento, revalidação do
@@ -235,3 +248,9 @@ acrescenta updates por campo, existing sem escrita, revisões sucessivas, víncu
 inconsistente e recibos históricos. Confirmar cadastro retorna exclusivamente
 `tool: create_lead`; não seleciona horário nem autoriza outra ação. Todos os testes
 são locais; as confirmações usam `server.inject()` e não consultam uma LLM.
+
+`chat-lead.test.ts` cobre a composição LangChain com quatro tools, o schema sem
+escopo/autorização, ToolMessages e resultados oficiais, ausência de escrita antes
+da confirmação, existing, Sim, correção e ação antiga/estrangeira. Os testes de
+atomicidade provocam falha na redação com/sem ação anterior, resposta pública
+inválida e falha após existing, conservando histórico, contexto e lifecycle.

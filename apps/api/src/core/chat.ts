@@ -3,11 +3,18 @@ import { HumanMessage, SystemMessage } from '@langchain/core/messages';
 import type { BaseMessage, ToolCall, ToolMessage } from '@langchain/core/messages';
 import type { Conversation } from './conversations.js';
 
+export type ToolExecutionScope<Context> = {
+  conversationId: string;
+  context: Context;
+  // undefined: preservar; null: retirar a prévia; objeto: propor substituição.
+  proposeAction: (proposal: unknown | null) => void;
+};
+
 type ChatComposition<Context> = {
   model: BaseChatModel | null;
   instructions: string;
   tools: BindToolsInput[];
-  executeTool: (call: ToolCall) => Promise<{ message: ToolMessage; result: unknown }>;
+  executeTool: (call: ToolCall, scope: ToolExecutionScope<Context>) => Promise<{ message: ToolMessage; result: unknown }>;
   updateContext: (current: Context, history: BaseMessage[], message: string) => Promise<Context>;
   describeContext: (context: Context) => string;
 };
@@ -38,14 +45,19 @@ export function createChatRunner<Context>({
     turnHistory.push(selection);
     const results: unknown[] = [];
     const calls = selection.tool_calls ?? [];
+    let actionProposal: unknown = undefined;
 
     for (const call of calls) {
-      const output = await executeTool(call);
+      const output = await executeTool(call, {
+        conversationId: conversation.id,
+        context: structuredClone(context),
+        proposeAction: (proposal) => { actionProposal = structuredClone(proposal); },
+      });
       turnHistory.push(output.message);
       results.push(output.result);
     }
 
-    // Uma rodada de consultas, seguida de redação sem ferramentas. Não há loop do agente.
+    // Uma rodada de tools, seguida de redação sem ferramentas. Não há loop do agente.
     const response = calls.length
       ? await model.invoke(messages())
       : selection;
@@ -58,6 +70,6 @@ export function createChatRunner<Context>({
       turnHistory.push(response);
     }
 
-    return { reply: response.text, results, history: turnHistory, context };
+    return { reply: response.text, results, history: turnHistory, context, actionProposal };
   };
 }

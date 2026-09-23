@@ -49,15 +49,21 @@ export function registerChatRoute<Context extends { revision: number }, Definiti
           const conversation = initial ?? conversations.get(id);
           if (!conversation) return reply.code(404).send(publicError('NOT_FOUND'));
           const turn = await runTurn(conversation, message);
+          const staged = turn.actionProposal !== undefined && turn.actionProposal !== null
+            ? actions.stage(id, turn.context.revision, turn.actionProposal) : undefined;
           const response = parseResponse({
             conversationId: id,
             reply: turn.reply,
             results: turn.results,
-            pendingAction: actions.pending(id, turn.context.revision),
+            pendingAction: staged?.preview ?? (turn.actionProposal === null
+              ? null : actions.pending(id, turn.context.revision)),
           });
 
+          // Sem await entre os commits locais. Nada foi alterado antes de parseResponse.
           conversations.save({ ...conversation, history: turn.history, context: turn.context });
           actions.invalidate(id, turn.context.revision);
+          if (turn.actionProposal === null) actions.invalidateCurrent(id);
+          staged?.commit();
           return reply.send(response);
         });
       } catch {

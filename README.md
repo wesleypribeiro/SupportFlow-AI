@@ -2,11 +2,12 @@
 
 Fundação do MVP para escolas de idiomas, seguindo exclusivamente
 [`language-school-sales-mvp`](openspec/changes/language-school-sales-mvp/proposal.md).
-As tasks 1.1 a 4.3 entregam a fundação, os contratos públicos, o catálogo escolar
-e a API de chat com histórico e contexto vigente em memória, além de três tools
+As tasks 1.1 a 4.4 entregam a fundação, os contratos públicos, o catálogo escolar
+e a API de chat com histórico e contexto vigente em memória, além de quatro tools
 via LangChain, a interface de chat, a política de consultas por turno e a infraestrutura
 de ações pendentes com confirmação por IDs e a política de cadastro/revisão do lead.
-A integração do cadastro ao agente/UI e o agendamento ficam para as próximas tasks.
+O cadastro está integrado ao agente e à interface, com prévia e confirmação explícita.
+O agendamento continua reservado às próximas tasks.
 
 ## Executar localmente
 
@@ -90,8 +91,7 @@ quando ficam ociosas.
 
 Primeiro, o mesmo modelo interpreta uma proposta estruturada de atualização do
 contexto, que o backend valida e aplica. Em seguida, o atendimento usa o contexto
-vigente em uma mensagem de sistema separada do histórico. O modelo tem três tools
-comerciais disponíveis, e as consultas retornam `ToolMessage`s com seus IDs
+vigente em uma mensagem de sistema separada do histórico. O modelo tem as três consultas de catálogo e `create_lead` disponíveis. As tools retornam `ToolMessage`s com seus IDs
 correspondentes. Se houve consultas, uma chamada final ao modelo original, sem
 tools vinculadas nem `tool_choice`, redige a resposta. São duas chamadas de modelo
 sem consultas ou três com consultas, em sequência fixa, sem loop aberto.
@@ -141,11 +141,11 @@ HTTP. Uma repetição verifica o vínculo e devolve esse snapshot antes de avali
 revisão atual, sem chamar novamente o executor, inclusive após falha de envio ou
 mudança de contexto. O envelope continua mostrando a prévia **atualmente** pendente,
 quando existir outra; o recibo original não muda. Falha técnica antes de registrar
-um recibo válido retorna `500/CHAT_ERROR`. Não há botão de confirmação na UI ainda.
+um recibo válido retorna `500/CHAT_ERROR`. A UI oferece “Confirmar cadastro” somente para a prévia atual do backend.
 
 O backend oferece `prepareLead(conversationId, input)` para exercitar diretamente
 `create_lead`, dentro da fila da conversa. O retorno separa `result` de `pendingAction`.
-Esse método não é uma rota HTTP nem uma ferramenta registrada no modelo. Entrada
+Esse método é um acesso interno; o adapter LangChain usa o mesmo caso de uso. Entrada
 estrita válida deve corresponder exatamente a nome, contato (`type` e `value`),
 curso e objetivo do contexto atual. O curso também deve continuar ativo no
 `SchoolRepository`. Cadastro inicial ou dados diferentes retornam
@@ -169,12 +169,36 @@ Lead salvo e `context.leadId` devem corresponder, inclusive quanto à ausência;
 inconsistências retornam `OPERATION_FAILED` na tool ou `500/CHAT_ERROR` na confirmação,
 sem escrita nem recuperação automática. Corrigir contexto não edita o cadastro:
 exige nova prévia e confirmação. Retentar uma ação concluída retorna seu recibo
-histórico, sem consultar o estado atual para redefinir o outcome. As três consultas de catálogo continuam sendo as únicas tools
-vinculadas ao LangChain; o prompt e a UI permanecem sem integração de cadastro.
+histórico, sem consultar o estado atual para redefinir o outcome. `create_lead` também está vinculada ao LangChain, mas apenas propõe cadastro/atualização; a confirmação continua exclusiva de `/api/chat/confirm`.
 
 Os testes usam barreiras de promises para comprovar a ordem correção → confirmação,
 a execução única em confirmações concorrentes, a independência entre conversas e
 a limpeza da fila, sem temporizadores de espera nem serviços externos.
+
+## Cadastro integrado ao chat — task 4.4
+
+O runner fornece `conversationId` e uma cópia do contexto validado do turno ao
+adapter por um escopo interno. Esses campos não fazem parte do schema da LLM.
+`create_lead` recebe apenas nome, contato, curso e objetivo; os casos de uso
+continuam validando sua correspondência com o contexto e o catálogo ativo.
+`CONFIRMATION_REQUIRED` é um resultado normal com HTTP 200, encaminhado como
+`ToolMessage` e preservado em `results`. `existing` não exige nova confirmação.
+
+Durante a execução das tools, preparar ou retirar uma prévia é somente uma proposta
+local do turno. Após a redação, `actions.stage` valida e captura argumentos e ID sem
+alterar os Maps globais. A rota valida o envelope completo e então, sem `await`
+entre as operações, salva histórico/contexto, invalida a revisão anterior e faz
+commit da nova ação (ou retira a prévia redundante). Falhar na tool, redação ou
+validação descarta a proposta e conserva a ação anterior. Não há escrita de lead
+nesse fluxo. As duas rotas continuam compartilhando a fila por conversa.
+
+A interface mantém apenas a ação atualmente retornada pelo backend. Uma correção
+bloqueia temporariamente a confirmação; depois, a resposta substitui, preserva ou
+remove a prévia. O botão envia somente os dois IDs. `409/ACTION_STALE` retira a ação
+e orienta nova revisão; falha de rede, HTTP 500 ou resposta inválida mantém os mesmos
+IDs para repetir a confirmação e recuperar o recibo. Chat e confirmação compartilham
+um bloqueio de envio. Resultados `created`, `updated` e `existing` são apresentados
+exclusivamente a partir dos dados oficiais, mesmo que a prosa diga outra coisa.
 
 ## Contexto vigente
 

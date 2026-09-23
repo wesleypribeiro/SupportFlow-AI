@@ -18,6 +18,25 @@ const receipt = () => ({
 });
 
 describe('snapshots internos de ações', () => {
+  it('stage não altera a ação atual e commit usa o snapshot protegido do rascunho', async () => {
+    const actions = createLanguageSchoolPendingActions();
+    const first = actions.prepare('conversation', 2, proposal());
+    const input = proposal();
+    const staged = actions.stage('conversation', 2, input);
+    input.preview.name = 'Alterado depois';
+    if ('name' in staged.preview.preview) staged.preview.preview.name = 'Alterado na leitura';
+    expect(actions.pending('conversation', 2)).toEqual(first);
+    expect(await actions.confirm('conversation', 2, staged.preview.actionId, undefined))
+      .toEqual({ ok: false, code: 'NOT_FOUND' });
+    staged.commit();
+    expect(actions.pending('conversation', 2)).toEqual({ ...proposal(), actionId: staged.preview.actionId });
+    expect(await actions.confirm('conversation', 2, first.actionId, undefined))
+      .toEqual({ ok: false, code: 'ACTION_STALE' });
+    const execute = vi.fn(async () => receipt());
+    await actions.confirm('conversation', 2, staged.preview.actionId, execute);
+    expect(execute.mock.calls[0]).toEqual([expect.objectContaining({ args: proposal().preview })]);
+  });
+
   it('não permite que leituras da prévia ou mutação do executor alterem os argumentos capturados', async () => {
     const actions = createLanguageSchoolPendingActions();
     const prepared = actions.prepare('conversation', 2, proposal());

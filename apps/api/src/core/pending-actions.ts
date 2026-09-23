@@ -27,14 +27,26 @@ export class InMemoryPendingActions<Definition extends ActionDefinition, Receipt
   ) {}
 
   prepare(conversationId: string, revision: number, proposal: unknown) {
+    const staged = this.stage(conversationId, revision, proposal);
+    staged.commit();
+    return staged.preview;
+  }
+
+  // Rascunho privado ao turno: validar/gerar ID não altera o lifecycle global.
+  stage(conversationId: string, revision: number, proposal: unknown) {
     const definition = structuredClone(this.parseDefinition(proposal));
     const action = {
       ...definition, actionId: randomUUID(), conversationId, revision,
     };
-    this.invalidateCurrent(conversationId);
-    this.actions.set(action.actionId, { action, status: 'pending' });
-    this.current.set(conversationId, action.actionId);
-    return this.publicPreview(action);
+    return {
+      preview: this.publicPreview(action),
+      // Somente operações síncronas em memória, depois da validação da resposta.
+      commit: () => {
+        this.invalidateCurrent(conversationId);
+        this.actions.set(action.actionId, { action, status: 'pending' });
+        this.current.set(conversationId, action.actionId);
+      },
+    };
   }
 
   // Leitura sem mutação permite validar a resposta antes de salvar o turno.

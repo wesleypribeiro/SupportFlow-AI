@@ -251,13 +251,13 @@ describe('primeiro lead: proposta separada da confirmação HTTP', () => {
     expect(update).not.toHaveBeenCalled();
   });
 
-  it('mantém create_lead fora das ferramentas disponíveis ao modelo', async () => {
+  it('disponibiliza create_lead sem preparar ação durante uma saudação', async () => {
     const app = application(new ScriptedChatModel([new AIMessage('Olá!')]));
     const response = await app.server.inject({ method: 'POST', url: '/api/chat', payload: { message: 'Olá' } });
     expect(response.statusCode).toBe(200);
     expect(response.json().pendingAction).toBeNull();
     const names = app.model.boundTools.map((tool) => 'name' in tool ? tool.name : 'function' in tool ? tool.function?.name : undefined);
-    expect(names.sort()).toEqual(['get_course_details', 'get_courses', 'get_school_info']);
+    expect(names.sort()).toEqual(['create_lead', 'get_course_details', 'get_courses', 'get_school_info']);
   });
 
   it('não prepara cadastro para conversa inexistente', async () => {

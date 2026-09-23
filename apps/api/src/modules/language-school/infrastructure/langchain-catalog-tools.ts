@@ -14,7 +14,7 @@ import type { createCatalogTools } from './catalog-tools.js';
 
 const executionError = 'Não foi possível executar a consulta do atendimento.';
 
-function contentAndArtifact(result: LanguageSchoolToolResult): [string, LanguageSchoolToolResult] {
+export function contentAndArtifact(result: LanguageSchoolToolResult): [string, LanguageSchoolToolResult] {
   const validated = languageSchoolToolResultSchema.parse(result);
   return [JSON.stringify(validated), validated];
 }
@@ -50,51 +50,53 @@ export function createLangChainCatalogTools(catalogTools: ReturnType<typeof crea
     }),
   ];
 
-  async function execute(call: ToolCall): Promise<{
-    message: ToolMessage;
-    result: LanguageSchoolToolResult;
-  }> {
-    const selected: StructuredToolInterface | undefined = tools.find(
-      (candidate) => candidate.name === call.name,
-    );
-    if (!selected || !call.id?.trim()) {
-      throw new Error(executionError);
-    }
+  return { tools, execute: (call: ToolCall) => executeLanguageSchoolTool(tools, call) };
+}
 
-    let message: ToolMessage;
-    try {
-      const output = await selected.invoke({ ...call, type: 'tool_call' });
-      if (!ToolMessage.isInstance(output)) {
-        throw new Error(executionError);
-      }
-      message = output;
-    } catch (error) {
-      if (!(error instanceof ToolInputParsingException)) {
-        throw new Error(executionError);
-      }
-
-      const result = languageSchoolToolResultSchema.parse({
-        tool: selected.name,
-        result: toolFailureSchema.parse({
-          ok: false,
-          error: { code: 'INVALID_INPUT', message: 'Entrada inválida para a consulta de catálogo.' },
-        }),
-      });
-      message = new ToolMessage({
-        name: selected.name,
-        tool_call_id: call.id,
-        content: JSON.stringify(result),
-        artifact: result,
-        status: 'error',
-      });
-    }
-
-    const parsed = languageSchoolToolResultSchema.safeParse(message.artifact);
-    if (!parsed.success || (!parsed.data.result.ok && parsed.data.result.error.code === 'OPERATION_FAILED')) {
-      throw new Error(executionError);
-    }
-    return { message, result: parsed.data };
+export async function executeLanguageSchoolTool(tools: StructuredToolInterface[], call: ToolCall,
+  invalidInputMessage = 'Entrada inválida para a consulta de catálogo.',
+): Promise<{
+  message: ToolMessage;
+  result: LanguageSchoolToolResult;
+}> {
+  const selected: StructuredToolInterface | undefined = tools.find(
+    (candidate) => candidate.name === call.name,
+  );
+  if (!selected || !call.id?.trim()) {
+    throw new Error(executionError);
   }
 
-  return { tools, execute };
+  let message: ToolMessage;
+  try {
+    const output = await selected.invoke({ ...call, type: 'tool_call' });
+    if (!ToolMessage.isInstance(output)) {
+      throw new Error(executionError);
+    }
+    message = output;
+  } catch (error) {
+    if (!(error instanceof ToolInputParsingException)) {
+      throw new Error(executionError);
+    }
+
+    const result = languageSchoolToolResultSchema.parse({
+      tool: selected.name,
+      result: toolFailureSchema.parse({
+        ok: false,
+        error: { code: 'INVALID_INPUT', message: invalidInputMessage },
+      }),
+    });
+    message = new ToolMessage({
+      name: selected.name,
+      tool_call_id: call.id,
+      content: JSON.stringify(result),
+      artifact: result,
+      status: 'error',
+    });
+  }
+
+  const parsed = languageSchoolToolResultSchema.safeParse(message.artifact);
+  if (!parsed.success || (!parsed.data.result.ok && parsed.data.result.error.code === 'OPERATION_FAILED')) {
+    throw new Error(executionError);
+  }
+  return { message, result: parsed.data };
 }

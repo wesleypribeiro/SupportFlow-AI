@@ -12,7 +12,7 @@ import { createConversationContext } from './modules/language-school/domain/conv
 import { courseFixtures, schoolFixture } from './modules/language-school/infrastructure/catalog-fixtures.js';
 import { createCatalogTools } from './modules/language-school/infrastructure/catalog-tools.js';
 import { InMemorySchoolRepository } from './modules/language-school/infrastructure/in-memory-school-repository.js';
-import { createLangChainCatalogTools } from './modules/language-school/infrastructure/langchain-catalog-tools.js';
+import { createLangChainSchoolTools } from './modules/language-school/infrastructure/langchain-tools.js';
 import { createContextUpdater, describeConversationContext } from './modules/language-school/infrastructure/langchain-context.js';
 import { languageSchoolInstructions } from './modules/language-school/prompt.js';
 import { createLanguageSchoolPendingActions } from './modules/language-school/infrastructure/pending-actions.js';
@@ -43,7 +43,7 @@ export function createApplication(environment: NodeJS.ProcessEnv, options: {
   const schoolRepository = options.schoolRepository ?? new InMemorySchoolRepository(schoolFixture, courseFixtures);
   const leadRepository = options.leadRepository ?? new InMemoryLeadRepository();
   const catalogTools = createCatalogTools(schoolRepository);
-  const langChainCatalog = createLangChainCatalogTools(catalogTools);
+  const langChainTools = createLangChainSchoolTools(catalogTools, { schoolRepository, leadRepository });
   const model = options.model ?? (config.llm
     ? new ChatOpenAI({ apiKey: config.llm.apiKey, model: config.llm.model })
     : null);
@@ -64,22 +64,22 @@ export function createApplication(environment: NodeJS.ProcessEnv, options: {
     runTurn: createChatRunner({
       model,
       instructions: languageSchoolInstructions,
-      tools: langChainCatalog.tools,
-      executeTool: langChainCatalog.execute,
+      tools: langChainTools.tools,
+      executeTool: langChainTools.execute,
       updateContext: createContextUpdater(model, schoolRepository),
       describeContext: describeConversationContext,
     }),
     parseResponse: (response) => languageSchoolChatResponseSchema.parse(response),
   });
 
-  // Ponto interno de composição. Não há rota nem tool de preparação pública.
+  // Ponto interno de composição; argumentos não vêm do navegador.
   const prepareAction = (conversationId: string, proposal: unknown) => conversations.runExclusive(conversationId, () => {
     const conversation = conversations.get(conversationId);
     if (!conversation) throw new Error('Conversa não encontrada para preparar ação.');
     return actions.prepare(conversationId, conversation.context.revision, proposal);
   });
 
-  // Exercício direto da tool nesta etapa. Nenhum registro no LangChain ou nova rota.
+  // Acesso determinístico direto sob a mesma fila, útil sem o modelo.
   const prepareLead = (conversationId: string, input: unknown) => conversations.runExclusive(conversationId, async () => {
     const conversation = conversations.get(conversationId);
     if (!conversation) return { result: createLeadResultSchema.parse(leadFailure('NOT_FOUND')), pendingAction: null };
