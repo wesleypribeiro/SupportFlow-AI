@@ -9,6 +9,8 @@ A task 5.1 acrescenta a consulta de disponibilidade da agenda interna.
 A task 5.2 acrescenta somente a proposta determinística de aula experimental.
 A task 5.3 acrescenta reserva atômica e recibo determinístico pela confirmação HTTP.
 A task 5.4 conecta consulta, seleção, proposta e recibo ao chat e à interface.
+A task 6.1 acrescenta solicitação local de atendimento humano como operação
+determinística interna, ainda sem registro no LangChain ou apresentação no chat.
 
 ## Organização
 
@@ -506,3 +508,53 @@ existing, prosa divergente e fallback após escrita. `pending-actions.test.ts`
 verifica que o recibo já é recuperável durante a redação e protege resultados contra
 mutação pelo redator. Correções reais pelo chat de contato/objetivo/curso/horário e
 update confirmado do lead deixam a reserva e o recibo anterior intactos.
+
+## Solicitação local de atendimento humano — task 6.1
+
+`HandoffRepository` possui apenas `findOpenByConversationId(conversationId)` e
+`requestForConversation(conversationId, { reason })`. O primeiro consulta a
+solicitação; o segundo registra ou devolve a original numa única operação.
+`InMemoryHandoffRepository` usa Map por conversa, gera o ID no backend, valida o
+registro completo antes da escrita e devolve cópias defensivas. Não há await entre
+consulta e inserção: chamadas concorrentes não abrem solicitações duplicadas.
+Repetição preserva ID, motivo e status originais, mesmo com outro reason.
+Outra conversa pode registrar o mesmo motivo e recebe seu próprio ID.
+
+O caso de uso `application/transfer-to-human.ts` recebe o escopo do backend
+separadamente: `conversationId` e `visitorIntent: request | accepted_offer | null`.
+Esse sinal representa pedido do visitante ou aceitação de uma oferta já identificados
+pelo chamador; null impede o registro. Não é argumento da LLM nem uma segunda
+confirmação. A interpretação conversacional e seu vínculo à mensagem/oferta serão
+feitos na integração 6.2. A 6.1 não interpreta texto nem altera o agente atual.
+
+`infrastructure/handoff-tool.ts` aceita somente `{ reason }`, valida entrada e
+resultado com os contratos existentes e delega ao caso de uso/repository. Reason
+é preservado sem normalização. Entrada inválida, extras ou ausência de intenção
+produzem `INVALID_INPUT`; exceções e saída fora do schema produzem
+`OPERATION_FAILED`, sem protocolo inventado ou detalhes internos. Sucesso usa
+exclusivamente `{ ok: true, data: { request: { id, reason, status: requested } } }`
+recuperado do repository. Não há outcome adicional no contrato público.
+
+`app.requestHumanHandoff(conversationId, input, visitorIntent)` é um ponto interno
+de composição, sem endpoint público. Usa a fila existente da conversa, verifica
+que ela existe e não modifica histórico, contexto ou ações pendentes. Conversa
+inexistente nesse acesso interno resulta em `OPERATION_FAILED`, sem criar estado.
+A garantia contra duplicação também existe no repository, independentemente da fila.
+
+Exemplo sem cadastro: para “Não quero me cadastrar. Prefiro falar com alguém.”,
+o backend pode chamar essa operação com o ID da conversa, `{ reason: "Prefiro
+falar com alguém." }` e `request`. Nome, contato, curso, lead e slot podem continuar
+null. Aceitação de oferta usa `accepted_offer`. Nenhum lead ou agendamento é criado,
+e a revisão não muda. Não se cria ou consome pendingAction.
+
+`requested` significa somente solicitação registrada na agenda interna
+demonstrativa de encaminhamentos. Não informa recebimento por uma pessoa,
+atribuição, disponibilidade de operadores, atendimento ao vivo ou prazo.
+Não existe integração externa, persistência em arquivo/banco ou encerramento.
+O registro se perde com o reinício, como os demais repositories em memória.
+
+Testes: `handoff-repository.test.ts` cobre isolamento, cópias, falha antes da escrita
+e concorrência; `handoff-tool.test.ts` cobre schemas, intenção interna, idempotência
+e falhas sanitizadas; `handoff-composition.test.ts` verifica pedido/aceitação com e
+sem lead, preservação de contexto, reservas e prévia, funcionamento sem modelo e
+manutenção das seis tools anteriores no agente. Tudo funciona sem rede/LLM real.

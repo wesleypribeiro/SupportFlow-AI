@@ -1,6 +1,6 @@
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import { ChatOpenAI } from '@langchain/openai';
-import { createLeadResultSchema, languageSchoolChatResponseSchema, scheduleTrialClassResultSchema } from '@supportflow/contracts/language-school';
+import { createLeadResultSchema, languageSchoolChatResponseSchema, scheduleTrialClassResultSchema, transferToHumanResultSchema } from '@supportflow/contracts/language-school';
 import { registerChatRoute } from './core/chat-route.js';
 import { createChatRunner } from './core/chat.js';
 import { loadCoreConfig } from './core/config.js';
@@ -30,6 +30,11 @@ import { createAvailableSlotsTool } from './modules/language-school/infrastructu
 import { createScheduleTrialClassTool } from './modules/language-school/infrastructure/trial-class-tool.js';
 import { trialClassFailure } from './modules/language-school/application/prepare-trial-class.js';
 import { createConfirmationReply } from './modules/language-school/infrastructure/confirmation-reply.js';
+import type { HandoffRepository } from './modules/language-school/domain/handoff-repository.js';
+import { InMemoryHandoffRepository } from './modules/language-school/infrastructure/in-memory-handoff-repository.js';
+import { createTransferToHumanTool } from './modules/language-school/infrastructure/handoff-tool.js';
+import { handoffFailure } from './modules/language-school/application/transfer-to-human.js';
+import type { HandoffScope } from './modules/language-school/application/transfer-to-human.js';
 
 // Composição explícita: o core não importa nem escolhe o segmento da aplicação.
 export function createApplication(environment: NodeJS.ProcessEnv, options: {
@@ -38,6 +43,7 @@ export function createApplication(environment: NodeJS.ProcessEnv, options: {
   schoolRepository?: SchoolRepository;
   leadRepository?: LeadRepository;
   trialClassRepository?: TrialClassRepository;
+  handoffRepository?: HandoffRepository;
   now?: () => Date;
 } = {}) {
   const config = {
@@ -52,6 +58,8 @@ export function createApplication(environment: NodeJS.ProcessEnv, options: {
   const schoolRepository = options.schoolRepository ?? new InMemorySchoolRepository(schoolFixture, courseFixtures);
   const leadRepository = options.leadRepository ?? new InMemoryLeadRepository();
   const trialClassRepository = options.trialClassRepository ?? new InMemoryTrialClassRepository(slotFixtures);
+  const handoffRepository = options.handoffRepository ?? new InMemoryHandoffRepository();
+  const transferToHuman = createTransferToHumanTool(handoffRepository);
   const now = options.now ?? (() => new Date());
   const getAvailableSlots = createAvailableSlotsTool({
     schoolRepository, trialClassRepository, now,
@@ -117,5 +125,13 @@ export function createApplication(environment: NodeJS.ProcessEnv, options: {
     return { result, pendingAction: actions.pending(conversationId, conversation.context.revision) };
   });
 
-  return { server, config, catalogTools, conversations, prepareAction, prepareLead, prepareTrialClass, getAvailableSlots };
+  // Acesso interno, sem endpoint novo ou LLM. O chamador fornece a intenção já
+  // identificada do visitante; não existe segunda confirmação para este registro.
+  const requestHumanHandoff = (conversationId: string, input: unknown, visitorIntent: HandoffScope['visitorIntent']) =>
+    conversations.runExclusive(conversationId, async () => {
+      if (!conversations.get(conversationId)) return transferToHumanResultSchema.parse(handoffFailure('OPERATION_FAILED'));
+      return transferToHuman(input, { conversationId, visitorIntent });
+    });
+
+  return { server, config, catalogTools, conversations, prepareAction, prepareLead, prepareTrialClass, getAvailableSlots, requestHumanHandoff };
 }

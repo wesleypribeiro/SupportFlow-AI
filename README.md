@@ -9,6 +9,10 @@ O agente dispõe de seis tools: `get_school_info`, `get_courses`, `get_course_de
 exigem prévia oficial e confirmação específica por IDs em `/api/chat/confirm`.
 O frontend apresenta horários, prévias e recibos exclusivamente do backend.
 Uma falha da LLM depois da reserva preserva o resultado com mensagem determinística.
+A task 6.1 acrescenta a operação interna de solicitação de atendimento humano,
+com um registro local por conversa, inclusive sem cadastro. Sua integração ao
+agente e apresentação no chat permanecem para a task 6.2; não há atendentes
+conectados ou envio para serviços externos.
 
 ## Executar localmente
 
