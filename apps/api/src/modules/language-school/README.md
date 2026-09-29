@@ -10,7 +10,7 @@ A task 5.2 acrescenta somente a proposta determinística de aula experimental.
 A task 5.3 acrescenta reserva atômica e recibo determinístico pela confirmação HTTP.
 A task 5.4 conecta consulta, seleção, proposta e recibo ao chat e à interface.
 A task 6.1 acrescenta solicitação local de atendimento humano como operação
-determinística interna, ainda sem registro no LangChain ou apresentação no chat.
+determinística interna. A task 6.2 conecta essa operação ao LangChain e ao chat.
 
 ## Organização
 
@@ -92,8 +92,8 @@ com papel `tool`; não se tornam mensagens de sistema nem modificam as ferrament
 disponíveis. A prosa não altera `results`, cria recibos ou autoriza operações.
 O prompt orienta coleta de dados faltantes, uso do contexto vigente no cadastro e
 revisão da prévia com o botão. Uma tool call ou “Sim” não autoriza escrita. Apenas
-resultados oficiais permitem explicar operações concluídas. Transferência para
-humano continua indisponível.
+resultados oficiais permitem explicar operações concluídas. A task 6.2 acrescenta
+o registro local de solicitação humana, sem iniciar atendimento ao vivo.
 
 `chat-policy.test.ts` usa `ScriptedChatModel`, os adapters reais e `server.inject()`:
 verifica objetivo sem consulta, catálogo seguido de detalhes por ID oficial,
@@ -525,7 +525,8 @@ separadamente: `conversationId` e `visitorIntent: request | accepted_offer | nul
 Esse sinal representa pedido do visitante ou aceitação de uma oferta já identificados
 pelo chamador; null impede o registro. Não é argumento da LLM nem uma segunda
 confirmação. A interpretação conversacional e seu vínculo à mensagem/oferta serão
-feitos na integração 6.2. A 6.1 não interpreta texto nem altera o agente atual.
+validados na integração 6.2 descrita abaixo; a operação da 6.1 permanece independente
+de LLM, catálogo, lead, agenda e ações pendentes.
 
 `infrastructure/handoff-tool.ts` aceita somente `{ reason }`, valida entrada e
 resultado com os contratos existentes e delega ao caso de uso/repository. Reason
@@ -557,4 +558,53 @@ Testes: `handoff-repository.test.ts` cobre isolamento, cópias, falha antes da e
 e concorrência; `handoff-tool.test.ts` cobre schemas, intenção interna, idempotência
 e falhas sanitizadas; `handoff-composition.test.ts` verifica pedido/aceitação com e
 sem lead, preservação de contexto, reservas e prévia, funcionamento sem modelo e
-manutenção das seis tools anteriores no agente. Tudo funciona sem rede/LLM real.
+preservação do conjunto explícito de tools do agente. Tudo funciona sem rede/LLM real.
+
+
+## Handoff no chat e recuperação de redação — task 6.2
+
+As sete tools estão registradas explicitamente. `transfer_to_human` expõe somente
+`reason`; seu adapter recebe mensagem atual, histórico anterior e conversationId
+pelo escopo interno do runner. Nenhum desses campos entra no schema público.
+O domínio resolve a intenção sem nova chamada à LLM em `handoff-intent.ts`:
+
+- Pedidos diretos como “Quero falar com alguém”, “Prefiro um atendente” e
+  “Pode me passar para uma pessoa?” são reconhecidos conservadoramente.
+- Negativas, hipóteses, citações e formas não reconhecidas não autorizam escrita.
+  O agente pede esclarecimento. Isto não pretende ser um classificador NLP geral.
+- Uma aceitação curta, inclusive “Sim”, exige que a última resposta final já salva
+  seja uma oferta inequívoca de handoff. O prompt orienta uma pergunta canônica;
+  duas variantes explícitas também são reconhecidas. A oferta expira após outro
+  turno. Ofertas de cadastro/reserva, outra conversa, ToolMessages e a própria
+  seleção atual da LLM não contam. Não há estado novo no ConversationContext,
+  nem revisão por oferecer/registrar handoff.
+
+A operação da 6.1 registra antes da redação, preservando ID e motivo originais.
+Seu resultado Zod válido entra no ToolMessage associado e no array oficial de
+results. OPERATION_FAILED deste adapter é um resultado controlado, sem protocolo;
+as políticas anteriores de falha das outras ferramentas foram preservadas.
+
+`handoff-reply.ts` produz a apresentação determinística a partir dos resultados.
+Ela substitui a prosa sobre handoff mesmo quando a LLM responde normalmente, para
+não prometer recebimento, atendimento ao vivo ou envio externo. O runner continua
+com uma rodada de tools e uma redação sem tools, sem retry ou segundo agente.
+
+Se a redação lançar, vier vazia/não textual ou pedir outra tool, só um sucesso de
+registro já validado habilita a recuperação: HTTP 200, protocolo original, results
+intactos e AIMessage determinística salva no histórico. O contexto validado do turno
+é salvo junto desse histórico; alterações reais ainda seguem a revisão normal.
+Falhas anteriores ao registro não usam esse fallback. Uma falha de registro retorna
+somente seu erro; se a redação também falhar, continua CHAT_ERROR.
+
+Em lote misto, uma proposta de cadastro/reserva continua local. Se a redação falhar
+após o handoff, essa proposta é descartada; a prévia anterior permanece quando a
+revisão não mudou. Registrar a solicitação não chama confirmação, não cria lead ou
+booking e não invalida ações por si só. A recuperação é específica da etapa de
+redação, não um mecanismo transacional ou recuperação genérica de todas as falhas.
+
+Testes novos: `handoff-intent.test.ts` cobre pedidos, aceitação condicionada,
+negativas e ambiguidade. `chat-handoff.test.ts` cobre as sete tools/schemas,
+escopo servidor, oferta realmente apresentada, repetição/isolamento, sem/com lead,
+prévia e reserva preservadas, falha anterior à escrita, saída inválida e recuperação
+após escrita com erro/conteúdo inválido/tool call. Também verifica histórico coerente
+e descarte de proposta de cadastro em lote com redação fracassada.

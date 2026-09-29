@@ -120,6 +120,7 @@ describe('POST /api/chat com SDK OpenAI e transporte simulado', () => {
         expect.objectContaining({ type: 'function', function: expect.objectContaining({ name: 'get_available_slots' }) }),
         expect.objectContaining({ type: 'function', function: expect.objectContaining({ name: 'create_lead' }) }),
         expect.objectContaining({ type: 'function', function: expect.objectContaining({ name: 'schedule_trial_class' }) }),
+        expect.objectContaining({ type: 'function', function: expect.objectContaining({ name: 'transfer_to_human' }) }),
       ]);
       expect(requests[2]).not.toHaveProperty('tools');
       expect(requests[2]).not.toHaveProperty('tool_choice');

@@ -79,7 +79,7 @@ describe('handoff local, independente do cadastro e do chat', () => {
     expect(app.model.calls).toHaveLength(0); expect(app.model.contextCalls).toHaveLength(0);
   });
 
-  it('não invalida a prévia existente; o chat continua com somente as seis tools anteriores', async () => {
+  it('não invalida a prévia existente; o chat continua com somente as sete tools do módulo', async () => {
     const app = application(new ScriptedChatModel([new AIMessage('Pode revisar a prévia atual.')]));
     const conversation = app.conversations.create();
     const lead = (await app.leadRepository.createForConversation(conversation.id, leadData))!;
@@ -99,7 +99,7 @@ describe('handoff local, independente do cadastro e do chat', () => {
     expect(app.conversations.get(conversation.id)?.context).toEqual(conversation.context);
     expect(await app.trialClassRepository.findConfirmedBySlotId('slot_english_a')).toBeNull();
     expect(app.model.boundTools.map((tool) => 'name' in tool ? tool.name : undefined)).toEqual([
-      'get_school_info', 'get_courses', 'get_course_details', 'get_available_slots', 'create_lead', 'schedule_trial_class',
+      'get_school_info', 'get_courses', 'get_course_details', 'get_available_slots', 'create_lead', 'schedule_trial_class', 'transfer_to_human',
     ]);
   });
 

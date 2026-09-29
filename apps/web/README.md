@@ -144,3 +144,27 @@ Verificação da task 5.4 em Chromium via Playwright local, Next e Fastify reais
 IDs exclusivos, prosa divergente, outcomes, clique duplo, mesma/nova/nenhuma ação,
 stale e retry de rede/500/envelope inválido. A suíte permanece Vitest/Testing Library
 sem rede externa; Playwright continua apenas uma ferramenta da verificação local.
+
+
+## Solicitação humana local — task 6.2
+
+`HandoffResults` renderiza apenas `transfer_to_human` de `results`: protocolo,
+motivo original e status `requested` apresentado como “Solicitado”. Não lê `reply`,
+não cria confirmação e não substitui `currentPendingAction`. A mensagem informa
+que o registro é demonstrativo, sem atendimento ao vivo ou notificação externa.
+Falhas têm aviso separado, sem card de sucesso; texto continua escapado por React.
+
+Verificação visual em Chromium isolado (Playwright já disponível no ambiente),
+com Next/Fastify reais e `ScriptedChatModel`, sem OpenAI ou tráfego externo:
+
+- Pedido sem cadastro com falha de redação após a escrita: HTTP 200 e protocolo real.
+- Repetição preservou protocolo e motivo, inclusive depois de nova falha simulada.
+- Cadastro confirmado e pedido posterior funcionaram na mesma conversa.
+- Oferta explícita seguida de “Sim, por favor” registrou solicitação sem cadastro.
+- Prosa simulada que alegava atendente conectado não apareceu na resposta do backend.
+- Enter enviou; capturas de 390×844 e 320×740 foram inspecionadas. Protocolo quebra
+  linha, motivo/status/aviso ficam acessíveis pela rolagem e não há overflow horizontal.
+
+`chat-handoff.test.tsx` cobre apresentação oficial, prosa divergente, repetição,
+falhas, HTML como texto, status inválido rejeitado e prévia anterior preservada,
+sem envio automático para `/api/chat/confirm`. A suíte usa Vitest/Testing Library.

@@ -7,6 +7,7 @@ import { confirmChatAction, sendChatMessage } from './chat-api';
 import { CatalogResults } from './catalog-results';
 import { LeadPreview, LeadResults } from './lead-results';
 import { TrialClassPreview, TrialClassResults } from './trial-class-results';
+import { HandoffResults } from './handoff-results';
 
 type Turn = {
   id: number;
@@ -149,6 +150,7 @@ export function Chat() {
                   <CatalogResults results={turn.response.results} />
                   <LeadResults results={turn.response.results} />
                   <TrialClassResults results={turn.response.results} />
+                  <HandoffResults results={turn.response.results} />
                 </article>
               )}
             </div>

@@ -125,3 +125,4 @@ textarea::placeholder { color: var(--muted); opacity: .85; }
 .trial-preview h2 { font-size: 20px; }
 .trial-preview .send-button { max-width: 100%; white-space: normal; margin-top: 12px; }
 .trial-preview, .trial-receipt, .schedule-results { min-width: 0; overflow-wrap: anywhere; }
+.handoff-result { margin-top: 18px; min-width: 0; overflow-wrap: anywhere; }

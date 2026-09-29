@@ -51,7 +51,7 @@ describe('agenda no chat: seleção, proposta atômica e recibo independente da 
     return schedule(leadId, slotId);
   };
 
-  it('registra exatamente seis tools, schemas estritos, consulta oficial sem ocupação e encaminha ToolMessage', async () => {
+  it('registra exatamente sete tools, schemas estritos, consulta oficial sem ocupação e encaminha ToolMessage', async () => {
     const app = await application([call('get_available_slots', { courseId }), new AIMessage('Horários inventados na prosa não são oficiais.')]);
     const response = await chat(app, 'Quais horários vocês têm?');
     expect(response.statusCode).toBe(200);
@@ -61,7 +61,7 @@ describe('agenda no chat: seleção, proposta atômica e recibo independente da 
     expect(current(app).context.slotId).toBeNull();
     expect(await app.trialClassRepository.findConfirmedBySlotId(slotA)).toBeNull();
     expect(app.model.boundTools.map((tool) => 'name' in tool ? tool.name : undefined)).toEqual([
-      'get_school_info', 'get_courses', 'get_course_details', 'get_available_slots', 'create_lead', 'schedule_trial_class',
+      'get_school_info', 'get_courses', 'get_course_details', 'get_available_slots', 'create_lead', 'schedule_trial_class', 'transfer_to_human',
     ]);
     const tool = app.model.boundTools.find((entry) => 'name' in entry && entry.name === 'schedule_trial_class');
     expect(tool && 'schema' in tool ? tool.schema : null).toBe(scheduleTrialClassInputSchema);

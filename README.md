@@ -2,17 +2,18 @@
 
 Fundação do MVP para escolas de idiomas, seguindo exclusivamente
 [`language-school-sales-mvp`](openspec/changes/language-school-sales-mvp/proposal.md).
-As tasks 1.1 a 5.4 entregam contratos estritos, catálogo, chat com contexto em memória,
+As tasks 1.1 a 6.2 entregam contratos estritos, catálogo, chat com contexto em memória,
 cadastro confirmado e agenda demonstrativa com reserva atômica e recibos históricos.
-O agente dispõe de seis tools: `get_school_info`, `get_courses`, `get_course_details`,
-`get_available_slots`, `create_lead` e `schedule_trial_class`. Cadastro e reserva
+O agente dispõe de sete tools: `get_school_info`, `get_courses`, `get_course_details`,
+`get_available_slots`, `create_lead`, `schedule_trial_class` e `transfer_to_human`. Cadastro e reserva
 exigem prévia oficial e confirmação específica por IDs em `/api/chat/confirm`.
 O frontend apresenta horários, prévias e recibos exclusivamente do backend.
 Uma falha da LLM depois da reserva preserva o resultado com mensagem determinística.
-A task 6.1 acrescenta a operação interna de solicitação de atendimento humano,
-com um registro local por conversa, inclusive sem cadastro. Sua integração ao
-agente e apresentação no chat permanecem para a task 6.2; não há atendentes
-conectados ou envio para serviços externos.
+As tasks 6.1 e 6.2 integram a solicitação de atendimento humano ao chat, inclusive
+sem cadastro. Pedido explícito ou aceitação da última oferta válida registra um
+protocolo local por conversa. A UI apresenta motivo original e status Solicitado.
+A apresentação determinística preserva o protocolo após falha de redação, sem
+afirmar atendimento ao vivo, recebimento por atendentes ou notificações externas.
 
 ## Executar localmente
 

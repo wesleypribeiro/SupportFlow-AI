@@ -1,11 +1,14 @@
 import type { BaseChatModel, BindToolsInput } from '@langchain/core/language_models/chat_models';
-import { HumanMessage, SystemMessage } from '@langchain/core/messages';
+import { AIMessage, HumanMessage, SystemMessage } from '@langchain/core/messages';
 import type { BaseMessage, ToolCall, ToolMessage } from '@langchain/core/messages';
 import type { Conversation } from './conversations.js';
 
 export type ToolExecutionScope<Context> = {
   conversationId: string;
   context: Context;
+  // Dados do turno mantidos pelo servidor, fora dos argumentos do modelo.
+  message: string;
+  history: readonly BaseMessage[];
   // undefined: preservar; null: retirar a prévia; objeto: propor substituição.
   proposeAction: (proposal: unknown | null) => void;
 };
@@ -17,10 +20,11 @@ type ChatComposition<Context> = {
   executeTool: (call: ToolCall, scope: ToolExecutionScope<Context>) => Promise<{ message: ToolMessage; result: unknown }>;
   updateContext: (current: Context, history: BaseMessage[], message: string) => Promise<Context>;
   describeContext: (context: Context) => string;
+  describeResults?: (results: readonly unknown[]) => { reply: string; hasRecordedWrite: boolean } | undefined;
 };
 
 export function createChatRunner<Context>({
-  model, instructions, tools, executeTool, updateContext, describeContext,
+  model, instructions, tools, executeTool, updateContext, describeContext, describeResults,
 }: ChatComposition<Context>) {
   return async function runTurn(conversation: Conversation<Context>, message: string) {
     if (!model?.bindTools) {
@@ -51,6 +55,8 @@ export function createChatRunner<Context>({
       const output = await executeTool(call, {
         conversationId: conversation.id,
         context: structuredClone(context),
+        message,
+        history: [...conversation.history],
         proposeAction: (proposal) => { actionProposal = structuredClone(proposal); },
       });
       turnHistory.push(output.message);
@@ -58,12 +64,22 @@ export function createChatRunner<Context>({
     }
 
     // Uma rodada de tools, seguida de redação sem ferramentas. Não há loop do agente.
-    const response = calls.length
-      ? await model.invoke(messages())
-      : selection;
-
-    if (response.tool_calls?.length || response.invalid_tool_calls?.length) {
-      throw new Error('Resposta final de chat inválida.');
+    const presentation = describeResults?.(structuredClone(results));
+    let response;
+    try {
+      response = calls.length ? await model.invoke(messages()) : selection;
+      if (response.tool_calls?.length || response.invalid_tool_calls?.length
+        || (presentation && (typeof response.content !== 'string' || !response.content.trim()))) {
+        throw new Error('Resposta final de chat inválida.');
+      }
+      if (presentation) response = new AIMessage(presentation.reply);
+    } catch (error) {
+      // Recupera somente a redação posterior a um resultado já registrado.
+      // Outras falhas e turnos sem escrita continuam atômicos como antes.
+      if (!presentation?.hasRecordedWrite) throw error;
+      response = new AIMessage(presentation.reply);
+      // Propostas de outras operações não sobrevivem a uma redação fracassada.
+      actionProposal = undefined;
     }
 
     if (calls.length) {

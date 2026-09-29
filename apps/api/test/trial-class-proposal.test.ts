@@ -85,7 +85,7 @@ describe('proposta de aula: vínculo, revisão e autorizações distintas', () =
     expect(chat.json().pendingAction).toEqual(action);
     expect(app.conversations.get(current.id)?.context).toEqual(current.context);
     expect(app.model.boundTools.map((tool) => 'name' in tool ? tool.name : undefined))
-      .toEqual(['get_school_info', 'get_courses', 'get_course_details', 'get_available_slots', 'create_lead', 'schedule_trial_class']);
+      .toEqual(['get_school_info', 'get_courses', 'get_course_details', 'get_available_slots', 'create_lead', 'schedule_trial_class', 'transfer_to_human']);
   });
 
   it.each(['args', 'leadId', 'slotId', 'courseId', 'confirmed', 'revision', 'preview'])(

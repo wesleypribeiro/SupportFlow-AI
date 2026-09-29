@@ -55,6 +55,7 @@ export function createLangChainCatalogTools(catalogTools: ReturnType<typeof crea
 
 export async function executeLanguageSchoolTool(tools: StructuredToolInterface[], call: ToolCall,
   invalidInputMessage = 'Entrada inválida para a consulta de catálogo.',
+  returnOperationFailure = false,
 ): Promise<{
   message: ToolMessage;
   result: LanguageSchoolToolResult;
@@ -95,7 +96,7 @@ export async function executeLanguageSchoolTool(tools: StructuredToolInterface[]
   }
 
   const parsed = languageSchoolToolResultSchema.safeParse(message.artifact);
-  if (!parsed.success || (!parsed.data.result.ok && parsed.data.result.error.code === 'OPERATION_FAILED')) {
+  if (!parsed.success || (!returnOperationFailure && !parsed.data.result.ok && parsed.data.result.error.code === 'OPERATION_FAILED')) {
     throw new Error(executionError);
   }
   return { message, result: parsed.data };

@@ -83,13 +83,13 @@ describe('cadastro no chat: proposta local ao turno e confirmação separada', (
     expect(create).toHaveBeenCalledTimes(1);
   });
 
-  it('registra somente as seis tools e mantém escopo e autorização fora do schema da LLM', async () => {
+  it('registra somente as sete tools e mantém escopo e autorização fora do schema da LLM', async () => {
     const app = application(new ScriptedChatModel([new AIMessage('Qual seu nome e contato?')]));
     const response = await chat(app, 'Quero me cadastrar.');
     expect(response.json()).toMatchObject({ results: [], pendingAction: null });
     const tools = app.model.boundTools;
     expect(tools.map((tool) => 'name' in tool ? tool.name : undefined))
-      .toEqual(['get_school_info', 'get_courses', 'get_course_details', 'get_available_slots', 'create_lead', 'schedule_trial_class']);
+      .toEqual(['get_school_info', 'get_courses', 'get_course_details', 'get_available_slots', 'create_lead', 'schedule_trial_class', 'transfer_to_human']);
     const lead = tools.find((tool) => 'name' in tool && tool.name === 'create_lead');
     expect(lead && 'schema' in lead ? lead.schema : undefined).toBe(createLeadInputSchema);
     for (const extra of ['conversationId', 'context', 'leadId', 'actionId', 'revision', 'confirmed', 'outcome']) {

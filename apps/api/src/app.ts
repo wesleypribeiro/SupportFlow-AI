@@ -35,6 +35,7 @@ import { InMemoryHandoffRepository } from './modules/language-school/infrastruct
 import { createTransferToHumanTool } from './modules/language-school/infrastructure/handoff-tool.js';
 import { handoffFailure } from './modules/language-school/application/transfer-to-human.js';
 import type { HandoffScope } from './modules/language-school/application/transfer-to-human.js';
+import { describeHandoffResults } from './modules/language-school/infrastructure/handoff-reply.js';
 
 // Composição explícita: o core não importa nem escolhe o segmento da aplicação.
 export function createApplication(environment: NodeJS.ProcessEnv, options: {
@@ -65,7 +66,7 @@ export function createApplication(environment: NodeJS.ProcessEnv, options: {
     schoolRepository, trialClassRepository, now,
   });
   const catalogTools = createCatalogTools(schoolRepository);
-  const langChainTools = createLangChainSchoolTools(catalogTools, { schoolRepository, leadRepository, trialClassRepository, now });
+  const langChainTools = createLangChainSchoolTools(catalogTools, { schoolRepository, leadRepository, trialClassRepository, handoffRepository, now });
   const model = options.model ?? (config.llm
     ? new ChatOpenAI({ apiKey: config.llm.apiKey, model: config.llm.model })
     : null);
@@ -98,6 +99,7 @@ export function createApplication(environment: NodeJS.ProcessEnv, options: {
       executeTool: langChainTools.execute,
       updateContext: createContextUpdater(model, schoolRepository, { trialClassRepository, now }),
       describeContext: describeConversationContext,
+      describeResults: describeHandoffResults,
     }),
     parseResponse: (response) => languageSchoolChatResponseSchema.parse(response),
   });

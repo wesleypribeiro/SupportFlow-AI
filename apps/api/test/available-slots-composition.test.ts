@@ -74,7 +74,7 @@ describe('composição da consulta de horários sem efeitos', () => {
     expect(chat.statusCode).toBe(200);
     expect(chat.json()).toMatchObject({ results: [], pendingAction: null });
     expect(model.boundTools.map((tool) => 'name' in tool ? tool.name : undefined))
-      .toEqual(['get_school_info', 'get_courses', 'get_course_details', 'get_available_slots', 'create_lead', 'schedule_trial_class']);
+      .toEqual(['get_school_info', 'get_courses', 'get_course_details', 'get_available_slots', 'create_lead', 'schedule_trial_class', 'transfer_to_human']);
     expect(app.conversations.get(chat.json().conversationId)?.context.slotId).toBeNull();
   });
 });
