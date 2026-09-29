@@ -1,170 +1,63 @@
-# Chat da demonstração
+# Frontend de chat
 
-A interface das tasks 3.3, 4.4 e 5.4 usa o App Router do Next.js com estado local no componente `Chat`.
-Execute `npm run dev` na raiz e abra `http://127.0.0.1:3000`. O modelo e suas
-credenciais são configurados exclusivamente na API; sem modelo, a interface
-apresenta o erro controlado do backend e permite tentar novamente.
+Interface Next.js App Router com React e TypeScript. Consulte o [README principal](../../README.md) para instalação, ambiente, jornada, fixtures e limitações. Na raiz, `npm run dev` inicia a demonstração em http://127.0.0.1:3000; `npm run dev:web` inicia somente o frontend e requer a API em outro processo para conversar.
 
-## Organização
+## Responsabilidades
 
-- `src/app/chat.tsx`: histórico visual por turno, rascunho, ID da conversa, envio e
-  erro recuperável e prévia atual. Um ref compartilhado bloqueia mensagens e
-  confirmações simultâneas antes do próximo render.
-- `src/app/chat-api.ts`: envia somente `{ message, conversationId? }` para
-  `/api/chat` e valida a resposta com os schemas públicos Zod. Mensagens de erro
-  para o visitante são locais; 404 de confirmação usa a mensagem pública validada
-  como texto. O helper `confirmChatAction` envia somente conversationId/actionId.
-- `src/app/catalog-results.tsx`: apresenta escola, lista e detalhes exclusivamente
-  dos resultados estruturados; formata centavos para BRL sem modificar os dados.
-- `src/app/lead-results.tsx`: prévia e recibos de cadastro vindos exclusivamente
-  de `pendingAction` e `results`.
-- `next.config.ts`: encaminha `/api/chat` e `/api/chat/confirm` para o Fastify em `127.0.0.1:3001`.
-  Não há API Route do Next nem configuração de LLM no frontend.
-
-O primeiro envio omite `conversationId`. Após uma resposta válida, o ID retornado
-é usado nos próximos envios. Cada turno preserva mensagem, `reply` e `results`;
-o contexto interno do backend não é copiado. Recarregar a página ou escolher
-“Nova conversa” descarta o ID e o histórico visual. Não há persistência no browser.
-
-`reply` é texto simples. Somente `results` preenche os cards oficiais; não há
-extração de fatos ou estados de operação da prosa. A lista contém os resumos que
-a API fornece; os preços aparecem nos detalhes. `null` significa “Preço não
-informado”, enquanto zero é mostrado como `R$ 0,00`.
-
-Erros de rede, HTTP e resposta inválida preservam o rascunho. Reenviar o mesmo
-texto falho reutiliza o turno visual, sem duplicar a mensagem. `404/NOT_FOUND`
-bloqueia o ID removido e oferece “Iniciar nova conversa”, preservando o rascunho
-para envio sem aquele ID. Uma falha não cria resposta fictícia do assistente.
-
-## Testes e verificação visual
-
-`npm test` executa os testes de interface no mesmo Vitest do projeto, usando
-jsdom, Testing Library e user-event. O `fetch` é substituído por respostas
-determinísticas; não são necessários navegador instalado, servidor, rede externa
-ou credenciais para a suíte obrigatória. Os testes cobrem contratos, teclado,
-envios simultâneos, continuidade, recuperação e separação de prosa e fatos.
-
-Verificação de navegador da task 3.3: Chromium local, conduzido por Playwright
-com respostas fictícias interceptadas, eventos reais de teclado e inspeção das
-capturas. Playwright foi utilizado somente nessa verificação, sem adicioná-lo
-como dependência ou requisito da suíte.
-
-| Verificação | Resultado |
+| Arquivo | Responsabilidade |
 | --- | --- |
-| Enter, Shift+Enter e Tab | Envio, quebra de linha e foco visível conferidos |
-| Processamento | Campo e envio desabilitados, indicação visível |
-| HTTP 500 e nova tentativa | Rascunho preservado, resposta recebida após repetir |
-| HTTP 404 | Nova conversa explícita, próximo envio sem ID inválido |
-| Escola, lista e detalhes | Dados apresentados em cards legíveis |
-| Preço não informado e preço zero | Apresentações distintas conferidas |
-| Prosa com preço divergente e alegação de reserva | Card manteve preço oficial e não criou confirmação |
-| Desktop 1360×900, telas 390×844 e 320×740 | Sem transbordamento horizontal; histórico longo com rolagem |
-| Recarregamento | Histórico visual e ID descartados |
-| Proxy Next → Fastify sem modelo | `400/INVALID_REQUEST` e `500/CHAT_ERROR` preservados |
+| [chat.tsx](src/app/chat.tsx) | Histórico visual, rascunho, ID retornado, estado de processamento/erro e `currentPendingAction`. |
+| [chat-api.ts](src/app/chat-api.ts) | Envio de mensagens/confirmações e validação Zod de respostas públicas. |
+| [catalog-results.tsx](src/app/catalog-results.tsx) | Escola, cursos e preços oficiais; formatação de centavos para BRL. |
+| [lead-results.tsx](src/app/lead-results.tsx) | Prévia de cadastro e recibos `created`, `updated` e `existing`. |
+| [trial-class-results.tsx](src/app/trial-class-results.tsx) | Horários disponíveis, prévia da aula, recibos e indisponibilidade. |
+| [handoff-results.tsx](src/app/handoff-results.tsx) | Protocolo, motivo original, status Solicitado e aviso demonstrativo. |
+| [next.config.ts](next.config.ts) | Rewrites `/api/chat` e `/api/chat/confirm` para Fastify em `127.0.0.1:3001`. |
 
-A avaliação em tela estreita foi feita no Chromium com viewport reduzido, sem
-dispositivo físico ou teclado virtual móvel. Não houve chamadas reais à OpenAI.
+Não há API Route que duplique o Fastify, configuração de LLM, acesso a repositories ou credenciais do provedor no frontend. Mudar o endereço da API exige ajustar os rewrites.
 
-## Prévia e confirmação do cadastro
+## Estado e fronteiras de confiança
 
-`currentPendingAction` é um estado local explícito substituído a cada resposta
-válida do backend. Exibimos somente a prévia atual, com nome, contato, identificador
-do curso e objetivo. O contrato não fornece o nome do curso nessa prévia; nenhum
-nome é inferido da prosa. Enviar uma correção bloqueia o botão até a resposta: mesmo
-ID reabilita, novo ID substitui, null remove. Se o turno falhar, conserva a prévia.
+O primeiro envio contém somente `message`; os seguintes acrescentam o `conversationId` recebido. Cada turno visual conserva texto enviado, `reply` e `results`. O componente não replica objetivo, nome, contato, curso, slot ou revisão do contexto interno do backend.
 
-“Confirmar cadastro” envia somente `{ conversationId, actionId }`, sem os dados da
-prévia. Durante a confirmação, o composer e o botão ficam desabilitados. O sucesso
-adiciona a prosa e o recibo oficial ao histórico e atualiza a ação atual. `created`,
-`updated` e `existing` têm apresentação própria, sem interpretar a prosa como sucesso.
-`CONFIRMATION_REQUIRED` apenas informa a necessidade de revisão, sem criar recibo.
+Recarregar ou escolher **Nova conversa** descarta ID/histórico visual. Não há cookies, localStorage, recuperação de sessão ou busca do histórico do servidor. Isso não remove automaticamente a conversa anterior da memória da API.
 
-`409/ACTION_STALE` remove a confirmação antiga e permite continuar conversando.
-Falha de rede, 500 ou envelope inválido conserva a mesma ação e oferece “Tentar
-confirmar novamente”, enviando exatamente o mesmo ID. O backend pode já ter gravado;
-o retry recupera o recibo salvo, sem consultar o chat. 404 informa indisponibilidade
-e oferece uma nova conversa; a UI não tenta distinguir ação desconhecida de conversa
-removida, pois o contrato intencionalmente não revela essa diferença.
+`reply` é renderizado como texto, sem HTML arbitrário. Cards oficiais usam somente `results`; prévias usam somente `pendingAction`. Preço `null` aparece como não informado e zero como `R$ 0,00`. Horários são formatados a partir do ISO oficial no `timezone` retornado, sem alterar esses dados.
 
-## Verificação da task 4.4
+A prévia de cadastro e o recibo da aula exibem `courseId` porque esses contratos não fornecem o nome do curso. A prévia da aula fornece o resumo oficial e permite mostrar o nome. Nenhum nome, preço, protocolo ou sucesso é inferido da prosa.
 
-Revisão em Chromium local via Playwright, com inspeção das capturas, Next.js real
-encaminhando para Fastify e `ScriptedChatModel` (sem OpenAI). O script temporário
-não foi adicionado à suíte nem às dependências de produção.
+## Prévias e confirmação
 
-- Catálogo, coleta de nome/contato/curso e prévia oficial conferidos.
-- Enter envia, Shift+Enter insere linha, botão acessível por foco e processamento
-  bloqueia novas operações.
-- Corrigir email substituiu a única prévia visível. Confirmar o ID antigo via HTTP
-  retornou 409; o novo ID criou somente o lead com contato corrigido.
-- Nova correção de objetivo produziu updated com o mesmo lead ID. Foi simulada perda
-  da resposta **após** o Fastify gravar: o retry enviou os mesmos IDs e recuperou um
-  recibo exatamente igual. Nova chamada com dados idênticos retornou existing sem botão.
-- Desktop 1360×900, viewports 390×844 e 320×740: campos, botão, erro e recibos legíveis,
-  rolagem do histórico e ausência de transbordamento horizontal. Sem dispositivo
-  físico/teclado virtual móvel; nenhum erro de execução no browser.
+Somente a ação atual é apresentada:
 
-`chat-lead.test.tsx` adiciona cobertura determinística para prévia oficial, prosa
-divergente, null no objetivo, created/updated/existing, corpo somente com IDs,
-clique duplo, exclusão mútua entre chat e confirmação, mesma/nova/nenhuma ação,
-409, 404, rede/500/envelope inválido e retry com o mesmo ID.
+| `kind` | Prévia | Botão |
+| --- | --- | --- |
+| `create_lead` | Nome, contato, curso e objetivo | **Confirmar cadastro** |
+| `schedule_trial_class` | Aluno, curso, data, hora, fuso e aviso demonstrativo | **Confirmar aula experimental** |
 
+Toda resposta válida substitui `currentPendingAction` pelo valor recebido. Enquanto uma mensagem é processada, a confirmação fica desabilitada. Mesmo actionId na resposta reabilita a prévia; outro ID a substitui; `null` a remove. Um turno falho conserva a ação para revisão/retry.
 
-## Agenda e recibos de aula — task 5.4
+`confirmChatAction` envia exclusivamente `{ conversationId, actionId }`; não reenvia `preview` ou argumentos comerciais. Um ref compartilhado bloqueia mensagens e confirmações simultâneas, inclusive cliques antes do próximo render. Enter envia; Shift+Enter quebra linha; mensagens vazias não são enviadas.
 
-`trial-class-results.tsx` apresenta listas de horários exclusivamente de `results`,
-com data/hora formatadas em pt-BR no timezone oficial. Lista vazia não sugere vagas.
-A prévia usa somente `pendingAction.preview`: aluno, nome do curso, data, hora,
-fuso e aviso de agenda demonstrativa. Seu botão é “Confirmar aula experimental”.
-O mesmo estado `currentPendingAction` e bloqueio de envio atendem cadastro e aula;
-nenhuma autorização de cadastro é reutilizada. Enviam-se somente os dois IDs.
+`CONFIRMATION_REQUIRED` informa revisão pendente, sem card de sucesso. `created`/`updated`/`existing` e `SLOT_UNAVAILABLE` vêm exclusivamente dos resultados oficiais. “Sua aula está confirmada” em `reply`, sem recibo correspondente, não marca reserva como concluída.
 
-O recibo usa `schedule_trial_class` em `results`: created, existing ou
-SLOT_UNAVAILABLE. O contrato do booking contém courseId, sem nome do curso; o recibo
-exibe esse identificador oficial, sem inferir nomes da prosa. Prosa divergente não
-cria sucesso ou altera dados, e uma falha de redação após a escrita usa o fallback
-do backend. Retry de transporte conserva a mesma ação para recuperar seu recibo.
+## Recuperação de erros
 
-Verificação da task 5.4 em Chromium via Playwright local, Next e Fastify reais,
-`ScriptedChatModel`, relógio fixo e sem OpenAI:
+- Rede, HTTP ou envelope inválido no envio: rascunho recuperável, sem resposta fictícia. Repetir o mesmo texto falho reutiliza o turno visual.
+- `409 / ACTION_STALE`: retira a ação antiga e permite continuar conversando para obter nova prévia.
+- Rede, HTTP 500 ou envelope inválido na confirmação: preserva conversa/actionId e oferece **Tentar confirmar novamente**. Reenvia a mesma confirmação, sem chamar o chat para descobrir o resultado; a escrita pode já estar concluída.
+- `404 / NOT_FOUND`: informa indisponibilidade e permite iniciar nova conversa. A UI não distingue ação desconhecida de conversa removida, pois o contrato não revela essa diferença.
 
-- Catálogo → curso → horários → escolha → cadastro confirmado → prévia de aula.
-- Troca de 11/06 às 10h para 12/06 às 14h substituiu a prévia; ID anterior retornou
-  409 e somente a nova ação confirmou a reserva.
-- Falha da LLM após a escrita retornou created com mensagem de contingência.
-  A resposta foi então perdida de propósito no transporte: repetir os mesmos IDs
-  recuperou o recibo integral. Uma nova consulta da mesma reserva retornou existing.
-- Ocupação por outro lead depois da prévia retornou SLOT_UNAVAILABLE, sem falso sucesso.
-- Enter, Shift+Enter, foco, processamento e bloqueio de operações simultâneas conferidos.
-- Desktop 1360×900, viewports 390×844 e 320×740: captura inspecionada, botões e
-  data/hora/fuso legíveis, histórico com rolagem e sem transbordamento horizontal.
-  Nenhum erro de execução no browser. Sem dispositivo físico/teclado virtual móvel.
+Sem modelo configurado na API, o chat apresenta `CHAT_ERROR` controlado. O frontend não possui modelo simulado automático.
 
-`chat-trial-class.test.tsx` cobre lista/vazio, prévia oficial, labels distintos,
-IDs exclusivos, prosa divergente, outcomes, clique duplo, mesma/nova/nenhuma ação,
-stale e retry de rede/500/envelope inválido. A suíte permanece Vitest/Testing Library
-sem rede externa; Playwright continua apenas uma ferramenta da verificação local.
+## Solicitação humana
 
+`transfer_to_human` apresenta somente o protocolo oficial, motivo original e `requested` como **Solicitado**, sem botão de confirmação. O aviso esclarece que nenhum atendimento ao vivo ou notificação externa foi iniciado. Handoff não confirma uma prévia preexistente. Resultados de falha mostram aviso, sem criar protocolo ou card de sucesso.
 
-## Solicitação humana local — task 6.2
+## Verificação
 
-`HandoffResults` renderiza apenas `transfer_to_human` de `results`: protocolo,
-motivo original e status `requested` apresentado como “Solicitado”. Não lê `reply`,
-não cria confirmação e não substitui `currentPendingAction`. A mensagem informa
-que o registro é demonstrativo, sem atendimento ao vivo ou notificação externa.
-Falhas têm aviso separado, sem card de sucesso; texto continua escapado por React.
+Na raiz, `npm test` executa também os quatro arquivos `chat*.test.tsx` usando Vitest, jsdom, Testing Library e fetch simulado. Não exige navegador instalado, rede externa ou OpenAI. `npm run typecheck`, `npm run lint` e `npm run build` incluem o frontend.
 
-Verificação visual em Chromium isolado (Playwright já disponível no ambiente),
-com Next/Fastify reais e `ScriptedChatModel`, sem OpenAI ou tráfego externo:
+A homologação integrada 7.1 usou Next/Fastify reais e `ScriptedChatModel` no Chromium, incluindo catálogo, correções de prévias, reserva, perda de resposta/retry e handoff. Viewports de **390 px e 320 px** foram inspecionados sem overflow horizontal. Foram verificadas divergências entre prosa e preço/recibo oficial. A verificação complementar não usou dispositivo físico ou teclado virtual móvel; Playwright não é dependência da suíte obrigatória.
 
-- Pedido sem cadastro com falha de redação após a escrita: HTTP 200 e protocolo real.
-- Repetição preservou protocolo e motivo, inclusive depois de nova falha simulada.
-- Cadastro confirmado e pedido posterior funcionaram na mesma conversa.
-- Oferta explícita seguida de “Sim, por favor” registrou solicitação sem cadastro.
-- Prosa simulada que alegava atendente conectado não apareceu na resposta do backend.
-- Enter enviou; capturas de 390×844 e 320×740 foram inspecionadas. Protocolo quebra
-  linha, motivo/status/aviso ficam acessíveis pela rolagem e não há overflow horizontal.
-
-`chat-handoff.test.tsx` cobre apresentação oficial, prosa divergente, repetição,
-falhas, HTML como texto, status inválido rejeitado e prévia anterior preservada,
-sem envio automático para `/api/chat/confirm`. A suíte usa Vitest/Testing Library.
+Veja os resultados completos no [registro de validação](../../openspec/changes/language-school-sales-mvp/verification.md) e o procedimento de [avaliação com modelo real](../../README.md#avaliação-opcional-com-modelo-real).

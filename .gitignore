@@ -24,5 +24,10 @@ Thumbs.db
 
 # Diretórios locais
 .agents/
-openspec/
 *.zip
+
+# OpenSpec: liberar somente os registros da change escolar ativa
+/openspec/*
+!/openspec/changes/
+/openspec/changes/*
+!/openspec/changes/language-school-sales-mvp/

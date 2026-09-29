@@ -1,84 +1,86 @@
 # Contratos públicos
 
-Implementação da task 2.1 de `language-school-sales-mvp`. O pacote depende somente
-de Zod em runtime e pode ser utilizado pela API e pelo navegador. Não contém
-repositórios, dados de demonstração da aplicação, execução de tools ou integração
-com modelos.
+Pacote compartilhado entre API e navegador, com **Zod como única dependência de runtime**. Não contém repositories, fixtures, execução de tools, regras de persistência ou integração com modelos. Consulte o [README principal](../../README.md#contratos-e-endpoints) para uso da API.
 
 ## Exports
 
-- `@supportflow/contracts`: todos os schemas e tipos.
-- `@supportflow/contracts/chat`: mensagem, confirmação, erro HTTP e composição do
-  envelope de resposta, sem dependência do segmento escolar.
-- `@supportflow/contracts/language-school`: entidades, entradas e resultados das
-  sete ferramentas, prévias e resposta completa do atendimento escolar.
+| Import | Conteúdo |
+| --- | --- |
+| `@supportflow/contracts` | Todos os schemas e tipos exportados. |
+| `@supportflow/contracts/chat` | Mensagem, confirmação, erro HTTP e composição genérica do envelope. |
+| `@supportflow/contracts/language-school` | Entidades, entradas/resultados das sete tools, prévias e envelope escolar. |
 
-Os tipos `School`, `CourseSummary`, `Course`, `Price`, `Contact`, `Lead`, `Slot`,
-`TrialClass`, `Handoff` e os tipos de entradas, resultados e chat são inferidos dos
-schemas por `z.infer`. Os schemas usam nomes em camelCase com sufixo `Schema`.
+Os tipos são derivados dos schemas por `z.infer`, incluindo `School`, `CourseSummary`, `Course`, `Price`, `Contact`, `Lead`, `Slot`, `TrialClass` e `Handoff`. Schemas usam camelCase com sufixo `Schema`. Os exports apontam para `dist`, gerado pelo build do pacote.
 
-## Decisões de modelagem
+## Valores e validação
 
-1. **Objetos e valores:** todos os objetos são estritos, inclusive os aninhados.
-   Não há coerção de tipos, defaults, geração de IDs/status ou preenchimento de
-   campos ausentes. IDs são strings opacas não vazias, sem UUID ou prefixo imposto.
-   Os valores são preservados; somente `message` é aparada, como exige a spec, antes
-   da validação do limite de 1 a 2.000 caracteres.
-2. **Preço:** `Price` é um objeto com `amountCents` inteiro não negativo, moeda
-   `BRL` e `billingPeriod` igual a `month` ou `course`. `Course.price` é obrigatório
-   e aceita esse objeto ou `null`. Zero é um preço cadastrado; `null` indica
-   informação indisponível. Omissão não equivale a `null`.
-3. **Dados institucionais:** a spec não detalha a estrutura de `address`, `contact`
-   e `openingHours` da escola. Foram adotados textos não vazios, sem modelo de
-   endereços ou grade semanal. O contato do lead é distinto: `{ type, value }`,
-   discriminado entre `email` e `phone`.
-4. **Telefone:** a spec exige formato válido, mas não define formato nacional ou
-   internacional. A validação aceita de 7 a 15 dígitos, `+` inicial opcional,
-   espaços, parênteses e hífens; não normaliza o número nem verifica sua existência.
-   E-mails usam a validação de formato do Zod.
-5. **Datas e fusos:** `startsAt` é uma string ISO válida com segundos e offset
-   explícito (`±HH:MM` ou `Z` para UTC). Não é convertida em `Date`. `timezone`
-   aceita um identificador IANA com `/`, reconhecido pelo `Intl` local, ou `UTC`.
-   Um instante pode ser transmitido em UTC e apresentado no fuso da escola;
-   não se exige igualdade textual entre offset e fuso. A validação não consulta
-   relógio, disponibilidade ou serviços externos.
-6. **Cursos:** entidades representam `active: true` e `active: false`. Os schemas
-   dos sucessos de catálogo e da prévia de reserva exigem `active: true`, pois
-   esses dados representam oferta pública. Isso rejeita dados inconsistentes;
-   não implementa filtragem ou consulta de catálogo.
-7. **Prévias:** cadastro expõe somente os argumentos definidos para `create_lead`.
-   A reserva expõe `{ lead, course, slot }`, usando `CourseSummary` ativo para
-   identificar o curso, sem exigir preço na prévia. Revisão, autorização,
-   argumentos internos e vínculo com a conversa não fazem parte da ação pública.
-   A indicação de agenda demonstrativa cabe à apresentação prevista na spec;
-   não foi adicionado um campo comercial novo para essa indicação.
-8. **Envelopes:** cada `{ tool, result }` associa um dos sete nomes à sua saída
-   específica. Falhas usam os códigos de tool previstos no design, sem criar
-   uma matriz adicional de códigos por operação. `CONFIRMATION_REQUIRED` é um
-   resultado `ok: false`, que pode acompanhar uma prévia em resposta de chat
-   bem-sucedida. Erros HTTP possuem seu próprio conjunto de códigos.
+- Objetos são estritos, inclusive aninhados. Não há coerção de tipos, defaults, geração de IDs/status ou preenchimento pela LLM. IDs são strings opacas não vazias, sem UUID/prefixo obrigatório.
+- Valores são preservados. Somente `ChatRequest.message` é aparada antes de validar 1 a 2.000 caracteres.
+- `Price` contém `amountCents` inteiro não negativo, `currency: BRL` e `billingPeriod: month | course`. `Course.price` é obrigatório e aceita `Price | null`: `null` é informação indisponível; zero é preço cadastrado. Omissão não equivale a `null`.
+- `School.address`, `School.contact` e `School.openingHours` são textos não vazios, sem estrutura de endereço/grade semanal adicional.
+- Contato do lead é `{ type: email | phone, value }`. E-mail usa o formato Zod; telefone aceita 7 a 15 dígitos, `+` inicial opcional, espaços, parênteses e hífens. Não normaliza nem verifica a existência do contato.
+- `startsAt` é ISO válido com offset (`±HH:MM` ou `Z`), preservado como string. `timezone` aceita fuso IANA com `/` reconhecido pelo `Intl` local, ou `UTC`. O schema não consulta clock ou disponibilidade; compatibilidade com escola/slot é validada no backend.
+- Entidades de curso permitem ativo/inativo; sucessos de catálogo e prévia da reserva exigem `active: true`. Schemas não filtram nem consultam o catálogo.
+- `TrialClass.status` é somente `confirmed`; `Handoff.status`, somente `requested`.
 
-## Fronteiras de confiança
+Fontes: [shared.ts](src/shared.ts), [entities.ts](src/language-school/entities.ts) e [tools.ts](src/language-school/tools.ts).
 
-O navegador envia apenas `{ message, conversationId? }` ou
-`{ conversationId, actionId }`. Não pode enviar `schoolId`, histórico, contexto,
-resultados, revisão ou argumentos de negócio na confirmação. Os argumentos das
-tools também não incluem autorização, contexto interno ou seleção de escola.
+## Entradas e resultados das sete tools
 
-A função pequena `createChatResponseSchema` recebe os schemas de resultados e
-ações do segmento, conforme o ponto de composição descrito no design. Não há
-registro dinâmico de schemas. O módulo exporta a composição concreta
-`languageSchoolChatResponseSchema`, sempre com `results` e `pendingAction`
-obrigatórios, admitindo lista vazia e `null`, respectivamente.
+| Tool | Entrada estrita | `data` de sucesso |
+| --- | --- | --- |
+| `get_school_info` | `{}` | `{ school }` |
+| `get_courses` | `{}` | `{ courses }` com resumos ativos |
+| `get_course_details` | `{ courseId }` | `{ course }` completo e ativo |
+| `get_available_slots` | `{ courseId }` | `{ courseId, slots }`; lista vazia é válida |
+| `create_lead` | `{ name, contact, courseId, goal }` | `{ outcome: created \| updated \| existing, lead }` |
+| `schedule_trial_class` | `{ leadId, slotId }` | `{ outcome: created \| existing, booking }` |
+| `transfer_to_human` | `{ reason }` | `{ request }` com ID, motivo e status |
 
-Validar a estrutura não comprova origem dos dados nem autoriza uma ação. Verificar
-referências existentes, vínculo/revisão da conversa, coerência lead/curso/slot,
-horário futuro, disponibilidade, repetição e persistência continua sendo tarefa
-dos futuros casos de uso do backend. Texto de `reply` não produz campos oficiais.
+Nas células acima, as alternativas de enum são notação de tipos, não JSON. Todas as saídas seguem `{ ok: true, data }` ou `{ ok: false, error: { code, message } }`. Códigos de tool: `INVALID_INPUT`, `NOT_FOUND`, `CONFIRMATION_REQUIRED`, `ACTION_STALE`, `SLOT_UNAVAILABLE`, `OPERATION_FAILED`.
 
-## Verificação
+`languageSchoolToolResultSchema` associa cada `{ tool, result }` ao schema correto, sem payload oficial livre. `CONFIRMATION_REQUIRED` é falha esperada da tool, acompanhada de prévia em um turno HTTP 200; não significa falha técnica de transporte. Nenhuma entrada aceita `confirmed`, `conversationId`, revisão ou autorização produzida pela LLM.
 
-`npm test` executa os testes do pacote junto da suíte principal, sem rede ou
-credenciais. `npm run typecheck --workspace @supportflow/contracts` inclui os
-testes na checagem estática. O build usa `tsconfig.build.json` para emitir somente
-os contratos e suas declarações, sem os arquivos de teste.
+## Chat e confirmação
+
+[chat/index.ts](src/chat/index.ts) define:
+
+```typescript
+import {
+  chatRequestSchema,
+  chatConfirmationRequestSchema,
+} from '@supportflow/contracts/chat';
+
+chatRequestSchema.parse({ message: 'Quais cursos vocês oferecem?' });
+
+// IDs ilustrativos: na chamada HTTP use os retornados pelo backend.
+chatConfirmationRequestSchema.parse({
+  conversationId: 'id-retornado-pelo-backend',
+  actionId: 'id-da-previa-retornada',
+});
+```
+
+O navegador pode enviar somente `{ message, conversationId? }` ou `{ conversationId, actionId }`. Histórico, `schoolId`, contexto, results, argumentos comerciais e configurações de modelo não fazem parte desses contratos.
+
+[language-school/chat.ts](src/language-school/chat.ts) compõe `languageSchoolChatResponseSchema`:
+
+- Campos obrigatórios: `conversationId`, `reply`, `results`, `pendingAction`.
+- `reply` é texto não vazio; não constitui resultado oficial.
+- `results` pode ser vazio, mas cada item deve corresponder ao schema de sua tool.
+- `pendingAction` é `null`, ou `{ actionId, kind, preview }`.
+- `kind: create_lead`: preview igual a `CreateLeadInput`, sem ID do lead.
+- `kind: schedule_trial_class`: preview `{ lead, course, slot }`, com resumo ativo de curso, sem preço/descrição extras.
+
+Revisão, estado interno, argumentos internos e autorização não são publicados. Não existe pending action de handoff.
+
+O envelope de erro HTTP é `{ error: { code, message } }`. O schema admite `INVALID_REQUEST`, `NOT_FOUND`, `ACTION_STALE`, `SLOT_UNAVAILABLE` e `CHAT_ERROR`; a rota atual publica conflito de vaga **em results com HTTP 200**, e usa HTTP 409 para `ACTION_STALE`. A presença de um código no schema não determina, sozinha, seu status HTTP.
+
+## Limite de responsabilidade
+
+Schema válido não prova origem, consentimento, disponibilidade ou vínculo à conversa. Casos de uso/repositories implementados no [módulo escolar](../../apps/api/src/modules/language-school/README.md) validam referências, contexto, futuro, disponibilidade, repetição e persistência. O core verifica lifecycle e confirmação por IDs. Prosa de `reply` nunca se transforma em fatos oficiais.
+
+## Verificação e build
+
+Na raiz, `npm test` inclui os testes do pacote na suíte sem rede/credenciais. `npm run typecheck --workspace @supportflow/contracts` inclui testes na checagem estática. `npm run build --workspace @supportflow/contracts` emite contratos e declarações, excluindo arquivos de teste por [tsconfig.build.json](tsconfig.build.json).
+
+O build principal e os pre-scripts de testes/desenvolvimento/checagem das aplicações já compilam o pacote quando necessário. Não edite `dist` manualmente.

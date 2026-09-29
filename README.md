@@ -1,321 +1,364 @@
 # SupportFlow AI
 
-Fundação do MVP para escolas de idiomas, seguindo exclusivamente
-[`language-school-sales-mvp`](openspec/changes/language-school-sales-mvp/proposal.md).
-As tasks 1.1 a 6.2 entregam contratos estritos, catálogo, chat com contexto em memória,
-cadastro confirmado e agenda demonstrativa com reserva atômica e recibos históricos.
-O agente dispõe de sete tools: `get_school_info`, `get_courses`, `get_course_details`,
-`get_available_slots`, `create_lead`, `schedule_trial_class` e `transfer_to_human`. Cadastro e reserva
-exigem prévia oficial e confirmação específica por IDs em `/api/chat/confirm`.
-O frontend apresenta horários, prévias e recibos exclusivamente do backend.
-Uma falha da LLM depois da reserva preserva o resultado com mensagem determinística.
-As tasks 6.1 e 6.2 integram a solicitação de atendimento humano ao chat, inclusive
-sem cadastro. Pedido explícito ou aceitação da última oferta válida registra um
-protocolo local por conversa. A UI apresenta motivo original e status Solicitado.
-A apresentação determinística preserva o protocolo após falha de redação, sem
-afirmar atendimento ao vivo, recebimento por atendentes ou notificações externas.
+Assistente de atendimento com IA para **escolas de idiomas**, desenvolvido como projeto Full Stack de portfólio. O MVP consulta informações comerciais, registra o interesse de um visitante, confirma aulas experimentais e registra pedidos locais de atendimento humano.
 
-## Executar localmente
+**Esta versão é uma demonstração:** escola fictícia única, agenda interna e dados em memória. Não é um sistema de produção para armazenar dados reais de alunos.
 
-Requisitos: Node.js 24 e npm 11. Se usar nvm, execute `nvm use` na raiz.
+## Navegação
 
-```sh
+- [Funcionalidades](#funcionalidades-implementadas) · [Arquitetura](#arquitetura)
+- [Instalação](#requisitos-e-instalação) · [Ambiente](#configuração-do-ambiente) · [Execução](#execução-local)
+- [Jornada](#fluxo-de-atendimento) · [Tools](#tools-disponíveis) · [API](#contratos-e-endpoints)
+- [Fixtures](#dados-demonstrativos) · [Memória](#persistência-e-reinicialização)
+- [Confirmação](#confirmação-e-segurança-das-operações) · [Concorrência](#disponibilidade-concorrência-e-recibos) · [Handoff](#atendimento-humano-local)
+- [Validação](#testes-e-validação) · [Limitações](#limitações-conhecidas) · [Modelo real](#avaliação-opcional-com-modelo-real) · [Evolução](#próximas-evoluções)
+
+## Funcionalidades implementadas
+
+- Chat responsivo com continuidade na mesma aba, envio por teclado, processamento e recuperação de erros.
+- Consulta da escola, catálogo ativo, detalhes, preços e horários cadastrados.
+- Contexto atual separado do histórico; correções substituem preferências e invalidam prévias antigas.
+- Um lead por conversa: cadastro e atualização confirmados, sem duplicação por repetição.
+- Reserva de aula experimental com confirmação específica, uma vaga por slot e recibos históricos.
+- Solicitação local de atendimento humano, inclusive sem cadastro, com protocolo e status `requested`.
+- Sete tools com entradas/saídas Zod estritas; fatos e recibos oficiais separados da prosa da LLM.
+- Testes de domínio, contratos, HTTP, frontend e jornadas integradas sem serviços externos.
+
+O escopo implementado está na change [language-school-sales-mvp](openspec/changes/language-school-sales-mvp/proposal.md). O plano anterior `supportflow-ai-mvp` não foi implementado: clientes e faturas não fazem parte deste produto.
+
+## Arquitetura
+
+```text
+apps/web — Next.js / React
+    ↓ POST /api/chat; rewrite para Fastify
+apps/api — API Fastify
+    ↓
+Conversation Core — histórico, contexto injetado, ordem por conversa e ações
+    ↓
+LangChain — interpretação e tool calling no backend
+    ↓
+Language School Module — adapters → casos de uso determinísticos
+    ↓
+SchoolRepository / LeadRepository / TrialClassRepository / HandoffRepository
+    ↓
+Implementações em memória
+```
+
+`packages/contracts` compartilha schemas Zod e tipos TypeScript entre API e frontend. Domínio e aplicação não importam LangChain, Fastify, React ou repositories concretos. A composição é explícita em [app.ts](apps/api/src/app.ts); [main.ts](apps/api/src/main.ts) inicia o processo.
+
+A confirmação HTTP segue diretamente do core ao executor determinístico do módulo; a LLM não autoriza a escrita. Na reserva, ela pode redigir uma explicação **depois** de o recibo oficial estar salvo. Todo acesso a dados passa pelos casos de uso/repositories, sem acesso direto da LLM a banco ou fixtures.
+
+O core recebe instruções, tools, contexto e validadores pela composição. Isso permite futuramente compor outro segmento sem colocar regras escolares no core; não há plataforma de plugins ou outro segmento implementado.
+
+Documentação complementar: [frontend](apps/web/README.md), [módulo escolar](apps/api/src/modules/language-school/README.md) e [contratos](packages/contracts/README.md).
+
+## Requisitos e instalação
+
+- **Node.js 24** e **npm 11**, conforme `engines` do [package.json](package.json).
+- Ambiente validado: Node 24.21.0, npm 11.19.0 e Fedora 43.
+- OpenSpec CLI 1.13.1 para validar a change; é uma ferramenta separada dos workspaces.
+
+Na raiz do checkout:
+
+```bash
+# Opcional, se você utiliza nvm:
+nvm use
+
 npm ci
+```
+
+`npm ci` instala o lockfile e os workspaces `packages/contracts`, `apps/api` e `apps/web`; pode precisar de acesso ao registry para baixar dependências. Não execute instalações separadas dentro dos workspaces.
+
+Para instalar a versão do CLI usada na auditoria, caso ainda não esteja disponível:
+
+```bash
+npm install --global @fission-ai/openspec@1.13.1
+openspec --version
+```
+
+## Configuração do ambiente
+
+A API inicia sem `.env` e sem credenciais. Para usar o provedor real, crie **`apps/api/.env`**, a partir do [template seguro](apps/api/.env.example). Execute a cópia somente se esse arquivo ainda não existir:
+
+```bash
+cp apps/api/.env.example apps/api/.env
+```
+
+Edite o arquivo local sem versioná-lo. Os scripts `dev` e `start` da API usam o carregamento nativo do Node (`--env-file-if-exists=.env`); variáveis do processo também são aceitas.
+
+| Variável | Padrão | Necessidade |
+| --- | --- | --- |
+| `HOST` | `127.0.0.1` | Opcional; endereço da API |
+| `PORT` | `3001` | Opcional; porta da API |
+| `SCHOOL_ID` | `school_demo` | Opcional; somente esse ID corresponde às fixtures |
+| `OPENAI_API_KEY` | Ausente | Obrigatória para usar OpenAI real; somente no backend |
+| `OPENAI_MODEL` | Ausente | Obrigatória junto da chave; modelo disponível na conta com tool calling e structured output compatíveis |
+
+Descomente e preencha as duas variáveis OpenAI somente para a avaliação real. Configurar apenas uma impede a inicialização. Não use `NEXT_PUBLIC_`, não coloque chaves no frontend e não envie configuração do modelo pelo chat.
+
+Sem as duas variáveis, frontend e healthcheck funcionam, mas `/api/chat` retorna `500 / CHAT_ERROR`: **não há modelo demonstrativo automático em `npm run dev`**. O `ScriptedChatModel` é utilizado pelos testes. `SCHOOL_ID` desconhecido também impede a inicialização; não cria outra escola.
+
+## Execução local
+
+Na raiz:
+
+```bash
 npm run dev
 ```
 
-- Frontend: http://127.0.0.1:3000 — chat com dados fictícios.
-- API: http://127.0.0.1:3001/health — responde `{"status":"ok"}`.
-- Chat: `POST http://127.0.0.1:3001/api/chat` — requer modelo configurado para responder.
-- `Ctrl+C` encerra os dois processos.
+Ou em dois terminais independentes:
 
-Também é possível iniciar separadamente com `npm run dev:api` e `npm run dev:web`.
+```bash
+npm run dev:api
+```
 
-## Configuração do backend
+```bash
+npm run dev:web
+```
 
-Os valores padrão permitem iniciar sem arquivo de ambiente e sem credenciais.
-Para personalizar, copie `apps/api/.env.example` para `apps/api/.env`. Os scripts
-da API carregam esse arquivo com o suporte nativo do Node.js.
+Os scripts de desenvolvimento compilam os contratos antes de iniciar cada aplicação.
 
-| Variável | Padrão | Uso |
+| Serviço | Endereço |
+| --- | --- |
+| Chat Next.js | http://127.0.0.1:3000 |
+| API Fastify | http://127.0.0.1:3001 |
+| Healthcheck | http://127.0.0.1:3001/health |
+
+```bash
+curl http://127.0.0.1:3001/health
+# {"status":"ok"}
+```
+
+O navegador chama `/api/chat` e `/api/chat/confirm` na origem do Next.js. Os [rewrites](apps/web/next.config.ts) encaminham para `127.0.0.1:3001`, sem duplicar a lógica do Fastify. Se alterar `HOST` ou `PORT`, os rewrites precisam corresponder ao endereço escolhido. `Ctrl+C` encerra os processos; o reinício da API perde o estado em memória.
+
+## Fluxo de atendimento
+
+Com o modelo configurado, abra o chat e use dados fictícios. Enter envia; Shift+Enter insere nova linha. Mensagens e confirmações não podem ser enviadas simultaneamente pela UI.
+
+1. Pergunte **“Quais cursos vocês oferecem?”** e confira os cards oficiais.
+2. Diga **“Quero inglês para viagem.”** e consulte os detalhes/preço do curso.
+3. Informe **“Meu nome é Ana. Meu email é ana@example.com. Quero prosseguir com o cadastro.”**
+4. Revise a prévia e clique em **Confirmar cadastro**. Confira o resultado oficial.
+5. Pergunte **“Quais horários estão disponíveis?”**
+6. Escolha uma data/hora realmente retornada, por exemplo **“Escolho 11/06/2030 às 10h.”**
+7. Peça para agendar no horário selecionado; revise aluno, curso, data, hora e fuso.
+8. Clique em **Confirmar aula experimental**. Confira o recibo oficial, que pode indicar sucesso ou indisponibilidade.
+9. Em qualquer momento, diga **“Quero falar com alguém.”** para solicitar atendimento humano local.
+
+Também é possível escolher o horário antes do cadastro; a proposta de reserva exige que o lead já esteja confirmado e corresponda ao contexto vigente. Se faltarem dados, o assistente deve pedir complemento. Alterar objetivo ou contato após cadastrar não atualiza automaticamente o lead: uma nova prévia de cadastro deve ser confirmada antes de prosseguir com a reserva.
+
+A seleção de horário é conservadora: exige uma data e hora explícitas que correspondam a **um único slot oficial elegível** no fuso apresentado. “Amanhã”, “primeira opção”, duas alternativas na mesma mensagem ou evidência de A associada ao ID de B não estabelecem uma nova seleção válida. O backend preserva a anterior e o agente deve pedir esclarecimento.
+
+## Tools disponíveis
+
+Todas têm argumentos estritos; `conversationId`, contexto, revisão e autorização são fornecidos pelo backend, nunca pela LLM.
+
+| Tool | Entrada | Finalidade e efeito |
 | --- | --- | --- |
-| `HOST` | `127.0.0.1` | Endereço de escuta da API |
-| `PORT` | `3001` | Porta da API |
-| `SCHOOL_ID` | `school_demo` | Deve corresponder à única escola das fixtures |
-| `OPENAI_API_KEY` | ausente | Credencial opcional do provedor |
-| `OPENAI_MODEL` | ausente | Modelo opcional do provedor |
+| `get_school_info` | `{}` | Leitura: dados da escola configurada, incluindo endereço, contato, funcionamento e fuso. |
+| `get_courses` | `{}` | Leitura: resumos dos cursos ativos. Lista vazia é sucesso; preços estão nos detalhes. |
+| `get_course_details` | `{ courseId }` | Leitura: curso ativo completo e preço cadastrado ou `null`. Ausente/inativo retorna `NOT_FOUND`. |
+| `get_available_slots` | `{ courseId }` | Leitura: horários futuros e livres do curso ativo, ordenados por instante. Não ocupa vaga. |
+| `create_lead` | `{ name, contact: { type, value }, courseId, goal }` | Propõe cadastro/update com dados coerentes com o contexto. Escrita exige prévia e confirmação; dados já idênticos retornam `existing` sem nova ação. `goal` aceita `null`. |
+| `schedule_trial_class` | `{ leadId, slotId }` | Propõe reserva para lead atualizado e horário vigente. Nova escrita exige confirmação específica; mesma reserva pode retornar `existing` sem nova ação. |
+| `transfer_to_human` | `{ reason }` | Escrita local após pedido explícito ou oferta aceita: registra/recupera solicitação da conversa, sem exigir lead ou segunda confirmação. |
 
-Chave e modelo devem ser configurados juntos e somente em `apps/api/.env` ou no
-ambiente do processo da API. Não use prefixo `NEXT_PUBLIC_` para esses valores.
-Quando ambos estão presentes, a composição instancia `ChatOpenAI`; somente uma
-requisição de chat invoca o modelo. Sem configuração, a aplicação inicia normalmente
-e o chat retorna HTTP 500 com `CHAT_ERROR`. A composição carrega `school_demo`; outro
-`SCHOOL_ID` interrompe a inicialização, sem alterar os dados cadastrados.
+`contact.type` é `email` ou `phone`, com formato validado; não há normalização silenciosa. IDs são opacos. A call da LLM para `create_lead` ou `schedule_trial_class` **não autoriza a escrita**: uma proposta válida retorna `ok: false`, `error.code: CONFIRMATION_REQUIRED`, com a prévia separada em `pendingAction`.
 
-## Consultar pelo chat
+## Contratos e endpoints
 
-Com o provedor configurado no backend, abra o frontend e envie uma mensagem.
-Enter envia; Shift+Enter insere uma nova linha. O Next.js encaminha `/api/chat` e `/api/chat/confirm`
-para o Fastify local em `127.0.0.1:3001`, por rewrite, sem duplicar a rota.
-Também é possível consultar pelo terminal:
+Os [schemas públicos](packages/contracts/README.md) rejeitam extras, tipos incorretos e objetos aninhados incompatíveis, sem coerção. `message` é aparada e deve conter de 1 a 2.000 caracteres. O navegador não envia histórico, `schoolId`, contexto, resultados de tools ou configuração do modelo.
 
-```sh
+### `POST /api/chat`
+
+Primeira mensagem:
+
+```json
+{"message":"Quais cursos vocês oferecem?"}
+```
+
+Continuação — substitua o identificador ilustrativo pelo recebido do backend:
+
+```json
+{"message":"Quero inglês para viagem.","conversationId":"id-retornado-pelo-backend"}
+```
+
+Exemplo de chamada ao Fastify, com o modelo configurado:
+
+```bash
 curl http://127.0.0.1:3001/api/chat \
   -H 'Content-Type: application/json' \
   -d '{"message":"Quais cursos vocês oferecem?"}'
 ```
 
-A resposta contém `{ conversationId, reply, results, pendingAction }`. Use o
-`conversationId` retornado junto à próxima `message` para continuar a conversa.
-O navegador pode enviar somente esses dois campos; o ID é gerado pelo backend.
-`pendingAction` permanece `null` no fluxo normal: nenhuma tool de escrita está conectada.
-Quando uma ação é preparada internamente pelo backend, esse campo publica somente
-`{ actionId, kind, preview }` da ação vigente.
+O sucesso é `{ conversationId, reply, results, pendingAction }`:
 
-O frontend mantém somente o histórico visual de cada turno, o ID retornado, o
-rascunho e os estados de envio/erro. Não recebe nem replica o contexto interno.
-Recarregar a página inicia outra conversa; não há cookies ou armazenamento local
-de conversas. Os cards de escola, cursos e preços usam exclusivamente `results`;
-a prosa de `reply` é exibida como texto, sem gerar fatos ou recibos. Preço `null`
-aparece como não informado; zero aparece como `R$ 0,00`.
+- `reply`: texto de apresentação; não constitui fato ou recibo oficial.
+- `results`: itens `{ tool, result }`, com `result` igual a `{ ok: true, data }` ou `{ ok: false, error: { code, message } }`, conforme a tool.
+- `pendingAction`: `null` ou `{ actionId, kind, preview }` fornecido pelo backend. Cadastro usa a prévia `{ name, contact, courseId, goal }`; reserva usa `{ lead, course, slot }` oficiais.
 
-Durante o processamento, novos envios ficam bloqueados. Erros de rede, HTTP ou
-envelope inválido preservam o rascunho para nova tentativa. Uma conversa removida
-retorna `404/NOT_FOUND`: a interface permite iniciar outra explicitamente, sem
-reutilizar o ID inválido. A organização e a verificação visual estão no
-[README do frontend](apps/web/README.md).
+### `POST /api/chat/confirm`
 
-Cada instância da aplicação mantém um `Map` privado de conversas, com ID,
-histórico LangChain e contexto atual separado. Histórico e contexto são salvos
-juntos apenas depois da conclusão e validação do turno; falhas não deixam chamadas
-de ferramenta pendentes ou mudanças parciais de contexto. Reiniciar a API apaga as conversas. Não há
-autenticação, expiração ou persistência. Mensagens e confirmações compartilham
-`conversations.runExclusive`: uma fila local de promises por `conversationId`.
-Cada operação lê o estado quando chega sua vez; falhas não bloqueiam as seguintes.
-Conversas diferentes prosseguem independentemente e entradas da fila são removidas
-quando ficam ociosas.
-
-Primeiro, o mesmo modelo interpreta uma proposta estruturada de atualização do
-contexto, que o backend valida e aplica. Em seguida, o atendimento usa o contexto
-vigente em uma mensagem de sistema separada do histórico. O modelo tem as três consultas de catálogo e `create_lead` disponíveis. As tools retornam `ToolMessage`s com seus IDs
-correspondentes. Se houve consultas, uma chamada final ao modelo original, sem
-tools vinculadas nem `tool_choice`, redige a resposta. São duas chamadas de modelo
-sem consultas ou três com consultas, em sequência fixa, sem loop aberto.
-
-O campo `results` copia os objetos validados produzidos pelas tools; `reply` contém
-somente a prosa do modelo. Texto livre continua probabilístico e não preenche nem
-altera os dados oficiais. Uma saudação pode retornar `results: []` sem consultar tools.
-
-| Situação | HTTP | Código público |
-| --- | --- | --- |
-| Entrada inválida, JSON malformado ou campos adicionais | 400 | `INVALID_REQUEST` |
-| Conversa/ação inexistente ou ação de outra conversa | 404 | `NOT_FOUND` |
-| Confirmação de ação substituída ou de revisão antiga | 409 | `ACTION_STALE` |
-| Modelo ausente, falha inesperada ou saída inválida | 500 | `CHAT_ERROR` |
-
-`INVALID_INPUT` ou `NOT_FOUND` de uma consulta aparecem em `results` com HTTP 200
-quando o modelo consegue concluir o turno. `OPERATION_FAILED` de uma tool interrompe
-o atendimento com `CHAT_ERROR`. As mensagens públicas não incluem exceções internas.
-
-## Infraestrutura de confirmação
-
-`POST /api/chat/confirm` aceita somente `{ conversationId, actionId }`. Campos como
-`args`, `confirmed`, `revision` ou dados de negócio retornam `400/INVALID_REQUEST`.
-Texto “Sim” enviado ao chat não autoriza a execução. A confirmação não consulta a LLM.
-
-O core guarda ações em memória com ID, conversa, tipo, argumentos capturados,
-revisão, prévia e estado `pending`, `stale` ou `completed`. A composição escolar
-valida a prévia usando os contratos existentes e deriva dela os argumentos, sem
-aceitar uma segunda versão editável. Cópias defensivas protegem a preparação,
-as leituras, os argumentos entregues ao executor e os recibos.
-
-Há somente uma prévia pendente vigente por conversa. Preparar outra invalida a
-anterior; mudar a revisão após um turno bem-sucedido também a invalida. Um turno
-que falha não salva histórico/contexto nem invalida a ação. IDs invalidados são
-retidos para responder `ACTION_STALE`, e recibos concluídos para repetição segura.
-Esses registros desaparecem ao reiniciar o processo.
-
-`createApplication` oferece `prepareAction(conversationId, { kind, preview })`
-somente para composição interna, passando pela mesma fila das rotas, e aceita
-`executeAction` como dependência opcional. O executor recebe uma cópia da ação
-armazenada, inclusive seus argumentos e vínculo. O executor padrão cria ou atualiza
-o lead da conversa ou confirma a aula, conforme o tipo da ação. A suíte da
-infraestrutura também injeta executores simulados compatíveis com os contratos.
-
-O recibo validado (`reply` e `results`) é salvo antes de construir/enviar a resposta
-HTTP. Uma repetição verifica o vínculo e devolve esse snapshot antes de avaliar a
-revisão atual, sem chamar novamente o executor, inclusive após falha de envio ou
-mudança de contexto. O envelope continua mostrando a prévia **atualmente** pendente,
-quando existir outra; o recibo original não muda. Falha técnica antes de registrar
-um recibo válido retorna `500/CHAT_ERROR`. A UI oferece “Confirmar cadastro” somente para a prévia atual do backend.
-
-Na confirmação de aula, indisponibilidade é um resultado de negócio em `results`
-com HTTP 200, seguindo o fluxo de recibo definido na task 5.3. Esse recibo também
-é salvo; o retry do mesmo actionId não volta a disputar a vaga. Uma nova chamada
-para o mesmo lead/slot retorna `existing`; uma nova chamada de outro lead retorna
-`SLOT_UNAVAILABLE`. A consulta de horários passa a excluir a vaga ocupada.
-
-O backend oferece `prepareLead(conversationId, input)` para exercitar diretamente
-`create_lead`, dentro da fila da conversa. O retorno separa `result` de `pendingAction`.
-Esse método é um acesso interno; o adapter LangChain usa o mesmo caso de uso. Entrada
-estrita válida deve corresponder exatamente a nome, contato (`type` e `value`),
-curso e objetivo do contexto atual. O curso também deve continuar ativo no
-`SchoolRepository`. Cadastro inicial ou dados diferentes retornam
-`CONFIRMATION_REQUIRED` sem gravar. Dados idênticos retornam `existing` imediatamente,
-usando o registro do repository, sem ação pendente, escrita ou nova revisão.
-Uma prévia redundante é invalidada; seus IDs antigos continuam retornando `ACTION_STALE`.
-
-Na confirmação, o executor usa os argumentos armazenados, revalida contexto e
-catálogo e compara o lead da conversa com os dados vigentes completos. Sem lead,
-cria e retorna `created`; com dados diferentes, atualiza o mesmo ID e retorna
-`updated`; com dados idênticos, retorna `existing` sem escrita. Os resultados usam
-o registro oficial e passam por `createLeadResultSchema`. O ID criado é associado
-a `context.leadId` dentro da mesma fila, sem alterar a revisão ou o histórico. Falha técnica anterior à
-gravação retorna `CHAT_ERROR`, não consome um recibo e permite repetir a confirmação.
-Falhas de validação/referência retornam resultado estruturado de erro; não criam lead.
-
-O repository oferece consulta, criação e atualização explícita por conversa, com
-cópias defensivas, recusa de uma segunda criação e preservação do ID no update.
-O registro inteiro é validado antes da substituição. Não há deduplicação por contato.
-Lead salvo e `context.leadId` devem corresponder, inclusive quanto à ausência;
-inconsistências retornam `OPERATION_FAILED` na tool ou `500/CHAT_ERROR` na confirmação,
-sem escrita nem recuperação automática. Corrigir contexto não edita o cadastro:
-exige nova prévia e confirmação. Retentar uma ação concluída retorna seu recibo
-histórico, sem consultar o estado atual para redefinir o outcome. `create_lead` também está vinculada ao LangChain, mas apenas propõe cadastro/atualização; a confirmação continua exclusiva de `/api/chat/confirm`.
-
-Os testes usam barreiras de promises para comprovar a ordem correção → confirmação,
-a execução única em confirmações concorrentes, a independência entre conversas e
-a limpeza da fila, sem temporizadores de espera nem serviços externos.
-
-## Cadastro integrado ao chat — task 4.4
-
-O runner fornece `conversationId` e uma cópia do contexto validado do turno ao
-adapter por um escopo interno. Esses campos não fazem parte do schema da LLM.
-`create_lead` recebe apenas nome, contato, curso e objetivo; os casos de uso
-continuam validando sua correspondência com o contexto e o catálogo ativo.
-`CONFIRMATION_REQUIRED` é um resultado normal com HTTP 200, encaminhado como
-`ToolMessage` e preservado em `results`. `existing` não exige nova confirmação.
-
-Durante a execução das tools, preparar ou retirar uma prévia é somente uma proposta
-local do turno. Após a redação, `actions.stage` valida e captura argumentos e ID sem
-alterar os Maps globais. A rota valida o envelope completo e então, sem `await`
-entre as operações, salva histórico/contexto, invalida a revisão anterior e faz
-commit da nova ação (ou retira a prévia redundante). Falhar na tool, redação ou
-validação descarta a proposta e conserva a ação anterior. Não há escrita de lead
-nesse fluxo. As duas rotas continuam compartilhando a fila por conversa.
-
-A interface mantém apenas a ação atualmente retornada pelo backend. Uma correção
-bloqueia temporariamente a confirmação; depois, a resposta substitui, preserva ou
-remove a prévia. O botão envia somente os dois IDs. `409/ACTION_STALE` retira a ação
-e orienta nova revisão; falha de rede, HTTP 500 ou resposta inválida mantém os mesmos
-IDs para repetir a confirmação e recuperar o recibo. Chat e confirmação compartilham
-um bloqueio de envio. Resultados `created`, `updated` e `existing` são apresentados
-exclusivamente a partir dos dados oficiais, mesmo que a prosa diga outra coisa.
-
-## Contexto vigente
-
-O contexto interno começa assim, sem alterar `ChatRequest` ou a resposta pública:
+Envie **somente os IDs retornados na mesma conversa**; os valores abaixo são placeholders, não uma ação existente:
 
 ```json
-{
-  "goal": null,
-  "name": null,
-  "contact": null,
-  "courseId": null,
-  "slotId": null,
-  "leadId": null,
-  "revision": 0
-}
+{"conversationId":"id-retornado-pelo-backend","actionId":"id-da-previa-retornada"}
 ```
 
-Na conversa “Quero inglês para viagem” seguida de “Na verdade, quero principalmente
-para entrevistas de emprego”, o histórico preserva ambas as declarações, enquanto
-`goal` passa de `viagem` para `entrevistas de emprego`. A revisão passa de 0 para 1
-e depois para 2. Campos não alterados, como nome, contato e curso, são preservados.
-Reaplicar os mesmos valores ou não propor alterações mantém a revisão.
+Não reenvie `preview`, nome, contato, `leadId`, `slotId`, `confirmed`, `revision` ou outros argumentos. A resposta de sucesso usa o mesmo envelope do chat. Não existe endpoint público separado de CRUD ou de slots.
 
-A interpretação usa `withStructuredOutput` do LangChain com o mesmo modelo
-injetado e somente mensagens do visitante. Uma proposta não modifica a conversa:
-Zod e `applyContextPatch` validam os campos antes de produzir uma nova cópia.
-Alterações de objetivo, nome e contato precisam aparecer literalmente na mensagem
-atual; uma resposta anterior do assistente não serve de fonte. Repetir exatamente
-o valor vigente é no-op, mesmo sem nova menção, e não aumenta a revisão. Contato
-repetido exige igualdade de `type` e `value`, sem normalização. Um valor antigo
-substituído continua sujeito à validação da mensagem atual. Formatos de contato
-seguem os schemas já aprovados. Falha de interpretação, validação, catálogo ou
-atendimento retorna `CHAT_ERROR` e preserva integralmente o turno anterior.
+| Situação | HTTP e resultado |
+| --- | --- |
+| JSON/entrada inválida ou campo adicional | `400`, erro `INVALID_REQUEST` |
+| Conversa/ação desconhecida ou ação de outra conversa | `404`, erro `NOT_FOUND` |
+| Ação pendente substituída ou revisão antiga | `409`, erro `ACTION_STALE` |
+| Modelo ausente ou falha técnica sem recuperação aplicável | `500`, erro `CHAT_ERROR` |
+| Consulta válida, ausência de preço/vagas, prévia para confirmação | `200`, resultado estruturado da tool |
+| Disputa de vaga durante confirmação | `200`, `SLOT_UNAVAILABLE` em `results`, salvo como recibo |
 
-Decisões conservadoras desta etapa: `null` na proposta significa **não alterar**,
-enquanto `null` no contexto significa **ainda não informado**; não há comando de
-exclusão de campos. Paráfrases que não aparecem na mensagem atual são rejeitadas.
-Curso é associado por ID exato, nome ou idioma sem diferenciar maiúsculas/minúsculas,
-desde que a referência identifique uma única opção ativa no catálogo consultado pelo
-`SchoolRepository`. Referência inventada, inativa, ausente ou ambígua mantém o curso
-anterior. Não há resolução semântica avançada de cursos. Na task 5.4, o interpretador
-propõe uma referência de horário com evidência na mensagem atual. O backend revalida
-a referência contra as vagas oficiais futuras do curso antes de alterar `slotId`.
-Outra seleção incrementa revisão; repetir a seleção não incrementa; trocar curso
-limpa o horário. Escolha ambígua preserva o estado e exige esclarecimento.
-`leadId` começa `null` e só recebe o ID salvo após confirmação de cadastro. O patch
-da LLM não pode criar horários, leads ou alterar a revisão diretamente.
+Erros HTTP usam `{ error: { code, message } }`. `INVALID_INPUT`/`NOT_FOUND` de tools podem integrar um turno HTTP 200. Em geral, `OPERATION_FAILED` de uma tool interrompe o turno com `CHAT_ERROR`; no handoff, é apresentado como resultado controlado quando a redação permite concluir o turno, sem protocolo fictício. Erros internos não são expostos.
 
-A validação limita a origem e o formato dos valores; a interpretação de intenção
-continua probabilística. O contexto não contém preços, disponibilidade ou fatos da
-escola, que continuam vindo exclusivamente dos resultados estruturados das tools.
+## Dados demonstrativos
 
-## Estrutura e decisões
+A escola `school_demo` é a **Escola Demonstração de Idiomas**, na Rua Fictícia dos Idiomas, 100, Cidade Exemplo. Contato `atendimento@escola-demonstracao.example`; funcionamento de segunda a sexta, das 9h às 18h; fuso **`America/Sao_Paulo`**. Todos esses dados são fictícios.
 
-```text
-apps/api/src/
-  core/                       HTTP, conversas, fluxo LangChain e configuração
-  modules/language-school/    domínio, consultas, tools e catálogo em memória
-  app.ts                      composição manual, testável sem escutar uma porta
-  main.ts                     ambiente do processo, escuta e encerramento
-apps/web/                     aplicação Next.js
-packages/contracts/           schemas e tipos públicos de chat e atendimento escolar
-```
+[Catálogo cadastrado](apps/api/src/modules/language-school/infrastructure/catalog-fixtures.ts):
 
-Todos os workspaces herdam TypeScript strict. O core não importa o módulo escolar;
-`app.ts` conecta explicitamente as partes, sem sistema de plugins. As consultas
-dependem de `SchoolRepository`; a implementação em memória fica na infraestrutura.
-As tools continuam disponíveis como `catalogTools`; um adapter da infraestrutura
-escolar as envolve com `tool()` do LangChain, usando os mesmos schemas e casos de uso.
-A interface do repositório, fixtures e erros estão descritos no
-[README do módulo escolar](apps/api/src/modules/language-school/README.md).
+| ID | Curso | Modalidade | Ativo | Preço oficial |
+| --- | --- | --- | --- | --- |
+| `course_english_travel` | Inglês para viagens | `online` | Sim | `35000` centavos / `BRL` / `month` — R$ 350,00 por mês |
+| `course_spanish_conversation` | Conversação em espanhol | `in_person` | Sim | `null` — preço não informado |
+| `course_french_intro` | Introdução ao francês | `online` | Sim | `0` centavos / `BRL` / `course` — curso gratuito na fixture |
+| `course_german_foundations` | Fundamentos de alemão | `in_person` | Não | `28000` centavos / `BRL` / `month`; não oferecido comercialmente |
 
-LangChain está instalado somente na API, por meio de `@langchain/core` e
-`@langchain/openai`, sem LangGraph. Os contratos compartilhados não dependem do
-backend nem exportam sua configuração. O frontend não importa código da API.
+**`price: null` significa valor não informado. `amountCents: 0` é um preço real cadastrado como zero.** Não são equivalentes. A formatação para reais é apenas apresentação.
 
-Os schemas Zod e as decisões de modelagem estão documentados no
-[README dos contratos](packages/contracts/README.md).
+[Slots cadastrados](apps/api/src/modules/language-school/infrastructure/slot-fixtures.ts), todos com `timezone: America/Sao_Paulo`:
 
-## Verificação
+| Slot | Curso | `startsAt` oficial |
+| --- | --- | --- |
+| `slot_english_a` | `course_english_travel` | `2030-06-11T10:00:00-03:00` |
+| `slot_english_b` | `course_english_travel` | `2030-06-12T14:00:00-03:00` |
+| `slot_english_past` | `course_english_travel` | `2030-06-09T10:00:00-03:00` |
+| `slot_english_occupied` | `course_english_travel` | `2030-06-11T09:00:00-03:00` |
+| `slot_french_a` | `course_french_intro` | `2030-06-11T11:00:00-03:00` |
+| `slot_spanish_past` | `course_spanish_conversation` | `2030-06-09T15:00:00-03:00` |
 
-```sh
+São horários **fixos de junho de 2030**, sem vínculo com a agenda verdadeira de uma escola. A aplicação usa relógio real e inicia sem reservas. Os testes injetam `2030-06-10T12:00:00Z` para distinguir passado/futuro e podem injetar `trialClassFixtures` para representar ocupação.
+
+Os sufixos `_past` e `_occupied` não determinam disponibilidade: ela vem do instante e do registro de reserva. Em particular, `slot_english_occupied` começa livre na aplicação normal; a reserva fixture correspondente é usada apenas quando injetada. No relógio fixo dos testes, os slots de 09/06 estão no passado; antes dessa data real podem aparecer como futuros. Quando as datas expirarem, a consulta não inventará substitutos.
+
+## Persistência e reinicialização
+
+> **Toda a persistência deste MVP é memória local do processo da API. Reiniciar a API apaga conversas, histórico, contexto, leads, reservas, handoffs, pending actions e recibos.**
+
+As fixtures de escola/cursos/slots são carregadas novamente e as vagas começam sem reservas. Não existe banco de dados, arquivo de persistência, recuperação de sessão entre reinicializações ou armazenamento comercial durável.
+
+Recarregar o navegador ou escolher “Nova conversa” descarta o ID e o histórico visual da aba e inicia outra conversa. Isso não apaga automaticamente a conversa anterior da memória da API, mas a UI não a recupera por cookie ou localStorage. Uma tentativa de continuar um ID perdido após reinício retorna `404 / NOT_FOUND`.
+
+IDs são identificadores opacos, **não autenticação**. Utilize apenas dados fictícios nesta demonstração.
+
+## Confirmação e segurança das operações
+
+### Cadastro: decisão de UX desta versão
+
+Quando `create_lead` precisa gravar ou atualizar dados, o backend apresenta uma prévia para revisão e exige o botão **Confirmar cadastro**. A call da tool apenas propõe; a escrita ocorre após a confirmação específica. Um cadastro já idêntico retorna `existing` sem escrita ou nova confirmação.
+
+Essa é a escolha de UX atual para dados voluntariamente fornecidos. Uma evolução poderá avaliar outro fluxo de consentimento para cadastro, mediante revisão própria. Isso **não flexibiliza a confirmação da reserva**.
+
+### Reserva: regra obrigatória da arquitetura atual
+
+Toda nova reserva depende de ação pendente válida, com argumentos imutáveis, vinculada à conversa, à revisão e ao `actionId` oficial. O visitante revisa os dados e clica em **Confirmar aula experimental**; o navegador envia somente `conversationId` e `actionId` a `/api/chat/confirm`.
+
+Um “sim” no chat, `confirmed: true` da LLM, prosa alegando sucesso ou confirmação de cadastro não autorizam reserva. Não existe configuração global para desligar ambas as confirmações.
+
+### Correções e atomicidade do turno
+
+Há uma ação pendente atual por conversa. Correções efetivas em nome, contato, objetivo, curso ou horário incrementam `revision` e invalidam a prévia anterior. Repetir o valor vigente não incrementa a revisão; trocar curso limpa o horário incompatível. Confirmar ação antiga retorna `ACTION_STALE`, sem adaptar seus argumentos aos dados novos.
+
+Prévias de cadastro/reserva ficam locais ao turno até a redação e o envelope público serem validados. Falha antes desse commit não deixa ação órfã. Mensagens e confirmações da mesma conversa são serializadas; conversas diferentes não compartilham uma fila global.
+
+## Disponibilidade, concorrência e recibos
+
+Consultar ou selecionar um slot não ocupa a vaga. O backend revalida lead, curso, horário e disponibilidade na confirmação. O `TrialClassRepository.reserveSlot` verifica ocupação e insere a reserva sem `await` entre decisão e escrita, garantindo uma reserva por slot **neste processo em memória**.
+
+| Resultado | Significado |
+| --- | --- |
+| `created` | Uma nova reserva foi registrada após confirmação. No cadastro, significa o primeiro lead da conversa. |
+| `existing` | O mesmo lead já tem a mesma reserva; nenhuma nova escrita. No cadastro, os dados já são idênticos. |
+| `updated` | Exclusivo do cadastro: os novos dados confirmados atualizaram o mesmo `lead.id`. |
+| `SLOT_UNAVAILABLE` | A vaga não pode ser reservada; outro lead pode tê-la ocupado depois da consulta. Conflito na confirmação gera recibo HTTP 200. |
+| `ACTION_STALE` | A prévia foi invalidada/substituída; HTTP 409, sem executar seus argumentos. |
+
+**Mesmo `actionId` concluído:** devolve o recibo histórico original, sem reexecutar nem pedir nova redação à LLM. Um recibo `created` permanece `created`; um recibo `SLOT_UNAVAILABLE` também permanece igual.
+
+**Nova tentativa para o mesmo lead/slot:** se as referências continuarem válidas e a reserva já existir, retorna `existing`. Isso é diferente de recuperar uma confirmação histórica. Outro lead recebe indisponibilidade.
+
+Após uma escrita, o recibo determinístico é salvo antes da redação opcional da reserva. Se a LLM falhar, retornar conteúdo inválido ou pedir outra tool nessa etapa, o resultado oficial e a mensagem de contingência são devolvidos com HTTP 200. Se a entrega HTTP falhar, a UI pode repetir os mesmos IDs e recuperar esse recibo.
+
+Reservas concluídas são snapshots: mudar contexto ou atualizar o lead não cancela, remarca ou reescreve o booking. A atomicidade local não é uma solução distribuída/persistente para múltiplas instâncias; isso exigiria outra implementação.
+
+## Atendimento humano local
+
+`transfer_to_human` funciona sem nome, contato, curso, lead ou reserva. O backend verifica pedido explícito ou aceitação da última oferta válida já apresentada. Um “sim” genérico sem oferta de handoff não registra solicitação.
+
+O repository gera um protocolo e mantém **uma solicitação aberta por conversa**, com `status: requested`. Repetições devolvem o ID e o motivo originais, mesmo quando o novo motivo é diferente. Não há segunda confirmação ou botão de handoff. Registrar esse pedido, por si só, não confirma nem invalida uma prévia de cadastro/reserva.
+
+**O MVP não conecta um atendente humano real, não envia notificações externas e não promete prazo de atendimento.** A UI mostra “Solicitado” e o aviso demonstrativo. A apresentação do handoff é determinística; uma falha de redação posterior ao registro preserva protocolo, resultado oficial e histórico coerente.
+
+## Testes e validação
+
+Na raiz, com OpenSpec disponível para o último comando:
+
+```bash
 npm test
-npm run lint
 npm run typecheck
+npm run lint
 npm run build
+openspec validate language-school-sales-mvp --strict
 ```
 
-Os testes usam ambiente fornecido explicitamente, valores fictícios e
-`Fastify.inject`, sem credenciais reais, servidor externo ou chamadas de LLM.
-`createApplication({}, { model })` aceita um `BaseChatModel` simulado: os testes
-usam `invoke` e o parser de structured output reais do LangChain com respostas
-programadas. O teste do SDK OpenAI usa transporte simulado, sem acesso ao provedor.
-O frontend usa o mesmo Vitest, com jsdom e Testing Library; `fetch` é simulado e
-nenhum teste de interface depende da API em execução. Os testes verificam envios,
-recuperação, histórico visual e cards oficiais mesmo com prosa divergente.
-Não é necessário criar um `.env` para executar testes, typecheck ou build.
-Os builds são executados na ordem contracts → API → web.
-Os scripts de teste, typecheck e desenvolvimento dos apps compilam `contracts`
-antes de usá-lo.
-Isso permite executar os comandos após `npm ci`, sem depender de um `dist` antigo.
+A auditoria da task 7.2 registrou **882 testes aprovados em 39 arquivos**, contagem reconfirmada na revisão documental 7.3. Consulte o [registro de verificação](openspec/changes/language-school-sales-mvp/verification.md) para ambiente, resultados e isolamento arquitetural.
 
-Para executar os artefatos compilados, use dois terminais após o build:
+A suíte principal não exige `.env`, chave OpenAI, rede externa, banco ou calendário. Usa Vitest, `ScriptedChatModel`, repositories em memória e Fastify `server.inject()`. O teste do SDK OpenAI usa transporte HTTP simulado. O frontend usa jsdom/Testing Library com fetch simulado; a [jornada integrada](apps/api/test/language-school-journey.test.ts) substitui somente a geração e falhas deliberadas de transporte, preservando casos de uso e repositories reais.
 
-```sh
-npm run start --workspace @supportflow/api
-npm run start --workspace @supportflow/web
-```
+Os testes cobrem confirmação, revisão, concorrência, isolamento, correções, perda de resposta, prosa divergente e preservação de recibos. A homologação complementar no Chromium incluiu larguras de 390 px e 320 px; navegador/Playwright não são requisitos de `npm test`.
+
+## Limitações conhecidas
+
+- Aplicação demonstrativa com memória volátil e uma escola fictícia; sem autenticação, multi-tenant ou recuperação de sessão.
+- Agenda fixa interna; sem calendário externo, cancelamento ou remarcação.
+- Sem pagamentos, billing, painel administrativo, CRM completo ou atendimento humano ao vivo.
+- Sem WhatsApp, notificações externas, voz, RAG, LangGraph ou múltiplos agentes.
+- Seleção de horário e reconhecimento de intenção de handoff são conservadores; formulações ambíguas podem exigir esclarecimento.
+
+### Texto livre continua probabilístico
+
+A LLM pode interpretar parcialmente uma intenção, sugerir patches de contexto, pedir esclarecimentos e redigir respostas naturais. Pode também produzir texto inadequado ou divergente.
+
+O sistema reduz riscos com schemas Zod, referências oficiais, casos de uso/repositories determinísticos, `results`, pending actions, confirmação explícita, recibos históricos e contingência do backend. Esses mecanismos **não eliminam toda possibilidade de erro textual**. A prosa não é fonte oficial de preço, curso, disponibilidade, reserva ou protocolo, nem autorização para escrever.
+
+## Avaliação opcional com modelo real
+
+Este procedimento é manual, separado de `npm test`, e **pode gerar custos no provedor**. Use somente dados fictícios. Nenhuma avaliação paga faz parte da validação automatizada.
+
+1. Configure `OPENAI_API_KEY` exclusivamente na API e `OPENAI_MODEL`, como descrito em [ambiente](#configuração-do-ambiente).
+2. Inicie com `npm run dev` e abra http://127.0.0.1:3000.
+3. Consulte catálogo e detalhes; compare os cards oficiais às fixtures, incluindo preço ausente e zero.
+4. Escolha inglês e informe nome/contato fictícios, por exemplo Ana e `ana@example.com`.
+5. Peça o cadastro, revise e clique em **Confirmar cadastro**. Verifique o lead e `outcome` em `results`.
+6. Consulte horários; escolha explicitamente uma data/hora exibida, por exemplo **“Escolho 11/06/2030 às 10h.”**, se ainda disponível e futura.
+7. Peça o agendamento. A prévia e `CONFIRMATION_REQUIRED` devem existir sem reserva concluída. Clique em **Confirmar aula experimental** e confira o recibo.
+8. Solicite **“Quero falar com alguém.”**. Verifique protocolo real e `requested`, sem promessa de atendimento ao vivo. Repita o pedido e confira o mesmo protocolo.
+9. Em nova conversa, prepare cadastro e corrija contato antes de confirmar: **“Meu email correto é ana.novo@example.com.”**. A prévia antiga deve deixar de ser confirmável; a nova deve conter o contato atual.
+10. Corrija o objetivo de viagem para **“Na verdade, quero principalmente entrevistas de emprego.”**. Se o lead já estiver salvo, ele deve exigir atualização confirmada antes de reservar.
+11. Após consultar slots, tente **“Quero a primeira opção.”** ou duas datas na mesma mensagem. Isso não deve criar uma nova seleção oficial; peça/observe esclarecimento e depois informe uma única data e hora.
+12. Antes de confirmar uma prévia de aula, escolha outro slot oficial explicitamente. Confirme somente a nova prévia e confira que o horário anterior não foi reservado.
+
+No DevTools, acompanhe `/api/chat` e `/api/chat/confirm`: os fatos observáveis são `results`, `pendingAction` e os recibos. Avalie separadamente clareza da redação, escolha das tools e necessidade de esclarecimentos; não considere uma frase de sucesso como evidência de gravação. Uma avaliação manual bem-sucedida não prova ausência absoluta de alucinações.
+
+## Próximas evoluções
+
+A próxima evolução prevista é o **canal WhatsApp para o SupportFlow AI**, a ser planejado em **uma change independente**, reutilizando o motor conversacional existente. Nenhuma integração WhatsApp está implementada neste MVP.
+
+Os artefatos de `language-school-sales-mvp` estão liberados para versionamento pelo `.gitignore`, incluindo specs, tarefas e auditoria. A change permanece disponível para revisão final; seu archive é uma etapa posterior explícita.
