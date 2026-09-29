@@ -26,8 +26,12 @@ Thumbs.db
 .agents/
 *.zip
 
-# OpenSpec: liberar somente os registros da change escolar ativa
+# OpenSpec: configuração, specs, histórico e change escolar ativa
 /openspec/*
+!/openspec/config.yaml
+!/openspec/config.yml
+!/openspec/specs/
 !/openspec/changes/
 /openspec/changes/*
+!/openspec/changes/archive/
 !/openspec/changes/language-school-sales-mvp/

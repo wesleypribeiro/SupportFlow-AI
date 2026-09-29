@@ -24,7 +24,7 @@ Assistente de atendimento com IA para **escolas de idiomas**, desenvolvido como 
 - Sete tools com entradas/saídas Zod estritas; fatos e recibos oficiais separados da prosa da LLM.
 - Testes de domínio, contratos, HTTP, frontend e jornadas integradas sem serviços externos.
 
-O escopo implementado está na change [language-school-sales-mvp](openspec/changes/language-school-sales-mvp/proposal.md). O plano anterior `supportflow-ai-mvp` não foi implementado: clientes e faturas não fazem parte deste produto.
+O escopo implementado está nas [especificações consolidadas](openspec/specs/) e na change arquivada [language-school-sales-mvp](openspec/changes/archive/2026-09-29-language-school-sales-mvp/proposal.md). O plano anterior `supportflow-ai-mvp` não foi implementado: clientes e faturas não fazem parte deste produto.
 
 ## Arquitetura
 
@@ -56,12 +56,12 @@ Documentação complementar: [frontend](apps/web/README.md), [módulo escolar](a
 
 - **Node.js 24** e **npm 11**, conforme `engines` do [package.json](package.json).
 - Ambiente validado: Node 24.21.0, npm 11.19.0 e Fedora 43.
-- OpenSpec CLI 1.13.1 para validar a change; é uma ferramenta separada dos workspaces.
+- OpenSpec CLI 1.13.1 para validar as specs e o histórico arquivado; é uma ferramenta separada dos workspaces.
 
 Na raiz do checkout:
 
 ```bash
-# Opcional, se você utiliza nvm:
+# Opcional, se você utiliza nvm: usa o Node 24 definido em .nvmrc
 nvm use
 
 npm ci
@@ -308,17 +308,18 @@ O repository gera um protocolo e mantém **uma solicitação aberta por conversa
 
 ## Testes e validação
 
-Na raiz, com OpenSpec disponível para o último comando:
+Na raiz, com OpenSpec disponível para os dois últimos comandos:
 
 ```bash
 npm test
 npm run typecheck
 npm run lint
 npm run build
-openspec validate language-school-sales-mvp --strict
+openspec validate --specs --strict
+openspec validate --archived
 ```
 
-A auditoria da task 7.2 registrou **882 testes aprovados em 39 arquivos**, contagem reconfirmada na revisão documental 7.3. Consulte o [registro de verificação](openspec/changes/language-school-sales-mvp/verification.md) para ambiente, resultados e isolamento arquitetural.
+A auditoria da task 7.2 registrou **882 testes aprovados em 39 arquivos**, contagem reconfirmada na revisão documental 7.3. Consulte o [registro de verificação](openspec/changes/archive/2026-09-29-language-school-sales-mvp/verification.md) para ambiente, resultados e isolamento arquitetural.
 
 A suíte principal não exige `.env`, chave OpenAI, rede externa, banco ou calendário. Usa Vitest, `ScriptedChatModel`, repositories em memória e Fastify `server.inject()`. O teste do SDK OpenAI usa transporte HTTP simulado. O frontend usa jsdom/Testing Library com fetch simulado; a [jornada integrada](apps/api/test/language-school-journey.test.ts) substitui somente a geração e falhas deliberadas de transporte, preservando casos de uso e repositories reais.
 
@@ -361,4 +362,4 @@ No DevTools, acompanhe `/api/chat` e `/api/chat/confirm`: os fatos observáveis 
 
 A próxima evolução prevista é o **canal WhatsApp para o SupportFlow AI**, a ser planejado em **uma change independente**, reutilizando o motor conversacional existente. Nenhuma integração WhatsApp está implementada neste MVP.
 
-Os artefatos de `language-school-sales-mvp` estão liberados para versionamento pelo `.gitignore`, incluindo specs, tarefas e auditoria. A change permanece disponível para revisão final; seu archive é uma etapa posterior explícita.
+As 22 tasks de `language-school-sales-mvp` foram concluídas e a change foi arquivada em `openspec/changes/archive/2026-09-29-language-school-sales-mvp/`. As seis capacidades consolidadas estão em `openspec/specs/`. Configuração, specs e histórico arquivado estão liberados para versionamento pelo `.gitignore`; a change antiga `supportflow-ai-mvp` continua ignorada e não arquivada.

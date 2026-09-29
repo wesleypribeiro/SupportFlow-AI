@@ -60,4 +60,4 @@ Na raiz, `npm test` executa também os quatro arquivos `chat*.test.tsx` usando V
 
 A homologação integrada 7.1 usou Next/Fastify reais e `ScriptedChatModel` no Chromium, incluindo catálogo, correções de prévias, reserva, perda de resposta/retry e handoff. Viewports de **390 px e 320 px** foram inspecionados sem overflow horizontal. Foram verificadas divergências entre prosa e preço/recibo oficial. A verificação complementar não usou dispositivo físico ou teclado virtual móvel; Playwright não é dependência da suíte obrigatória.
 
-Veja os resultados completos no [registro de validação](../../openspec/changes/language-school-sales-mvp/verification.md) e o procedimento de [avaliação com modelo real](../../README.md#avaliação-opcional-com-modelo-real).
+Veja os resultados completos no [registro de validação](../../openspec/changes/archive/2026-09-29-language-school-sales-mvp/verification.md) e o procedimento de [avaliação com modelo real](../../README.md#avaliação-opcional-com-modelo-real).
