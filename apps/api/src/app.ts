@@ -3,6 +3,7 @@ import { ChatOpenAI } from '@langchain/openai';
 import { createLeadResultSchema, languageSchoolChatResponseSchema, scheduleTrialClassResultSchema, transferToHumanResultSchema } from '@supportflow/contracts/language-school';
 import { registerChatRoute } from './core/chat-route.js';
 import { createChatRunner } from './core/chat.js';
+import { createConversationService } from './core/conversation-service.js';
 import { loadCoreConfig } from './core/config.js';
 import { InMemoryConversations } from './core/conversations.js';
 import type { ActionExecutor } from './core/pending-actions.js';
@@ -87,7 +88,7 @@ export function createApplication(environment: NodeJS.ProcessEnv, options: {
     },
     clearPendingAction: (scope) => { actions.invalidateCurrent(scope.conversationId); },
   });
-  registerChatRoute(server, {
+  const conversationService = createConversationService({
     conversations,
     actions,
     executeAction: options.executeAction ?? createLanguageSchoolConfirmationExecutor({ schoolRepository, leadRepository, trialClassRepository, now, conversations }),
@@ -103,6 +104,7 @@ export function createApplication(environment: NodeJS.ProcessEnv, options: {
     }),
     parseResponse: (response) => languageSchoolChatResponseSchema.parse(response),
   });
+  registerChatRoute(server, conversationService);
 
   // Ponto interno de composição; argumentos não vêm do navegador.
   const prepareAction = (conversationId: string, proposal: unknown) => conversations.runExclusive(conversationId, () => {
@@ -135,5 +137,5 @@ export function createApplication(environment: NodeJS.ProcessEnv, options: {
       return transferToHuman(input, { conversationId, visitorIntent });
     });
 
-  return { server, config, catalogTools, conversations, prepareAction, prepareLead, prepareTrialClass, getAvailableSlots, requestHumanHandoff };
+  return { server, config, catalogTools, conversations, conversationService, prepareAction, prepareLead, prepareTrialClass, getAvailableSlots, requestHumanHandoff };
 }
