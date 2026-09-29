@@ -26,7 +26,7 @@ Thumbs.db
 .agents/
 *.zip
 
-# OpenSpec: configuração, specs, histórico e change escolar ativa
+# OpenSpec: configuração, specs, histórico e changes autorizadas
 /openspec/*
 !/openspec/config.yaml
 !/openspec/config.yml
@@ -35,3 +35,4 @@ Thumbs.db
 /openspec/changes/*
 !/openspec/changes/archive/
 !/openspec/changes/language-school-sales-mvp/
+!/openspec/changes/whatsapp-channel-mvp/
