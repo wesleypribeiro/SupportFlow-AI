@@ -72,6 +72,23 @@ describe('snapshots internos de ações', () => {
     expect(execute).toHaveBeenCalledTimes(1);
   });
 
+  it('salva recibo antes da redação, preserva resultados e nunca depende da LLM no retry', async () => {
+    const actions = createLanguageSchoolPendingActions();
+    const action = actions.prepare('conversation', 2, proposal());
+    const execute = vi.fn(async () => receipt());
+    const describe = vi.fn(async (_action, official) => {
+      // Ainda durante a redação, uma leitura da conclusão já recupera o recibo.
+      expect(await actions.confirm('conversation', 99, action.actionId, execute))
+        .toEqual({ ok: true, receipt: receipt() });
+      official.results.splice(0); // Redator recebe cópia; fatos oficiais não mudam.
+      return 'Explicação natural.';
+    });
+    const completed = await actions.confirm('conversation', 2, action.actionId, execute, describe);
+    expect(completed).toEqual({ ok: true, receipt: { ...receipt(), reply: 'Explicação natural.' } });
+    expect(await actions.confirm('conversation', 99, action.actionId, execute, describe)).toEqual(completed);
+    expect(execute).toHaveBeenCalledTimes(1); expect(describe).toHaveBeenCalledTimes(1);
+  });
+
   it('detecta revisão diferente na própria confirmação mesmo sem invalidação antecipada', async () => {
     const actions = createLanguageSchoolPendingActions();
     const action = actions.prepare('conversation', 2, proposal());

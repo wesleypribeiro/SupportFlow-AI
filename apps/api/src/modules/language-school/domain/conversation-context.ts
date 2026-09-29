@@ -4,7 +4,9 @@ import {
   contactSchema,
   leadSchema,
   type ActiveCourseSummary,
+  type Slot,
 } from '@supportflow/contracts/language-school';
+import { resolveSlotReference } from './slot-reference.js';
 
 export const conversationContextSchema = z.strictObject({
   goal: leadSchema.shape.goal,
@@ -16,14 +18,19 @@ export const conversationContextSchema = z.strictObject({
   revision: z.number().int().nonnegative(),
 });
 
-// Todos os campos são obrigatórios para structured output. Null significa não alterar.
-// Referências propostas ainda não são IDs oficiais; somente o catálogo pode resolvê-las.
+// Null significa não alterar. Referências propostas só se tornam IDs vigentes
+// depois da resolução pelo catálogo/agenda oficial.
 export const contextPatchSchema = z.strictObject({
   goal: leadSchema.shape.goal,
   name: leadSchema.shape.name.nullable(),
   contact: contactSchema.nullable(),
   courseReference: nonEmptyStringSchema.nullable(),
+  slotReference: z.strictObject({ slotId: identifierSchema, evidence: nonEmptyStringSchema }).nullable().optional(),
 });
+
+// Structured output exige todas as chaves; chamadas internas antigas podem omitir
+// slotReference. Nenhum campo novo é aceito pelo contrato público do chat.
+export const contextInterpretationSchema = contextPatchSchema.required({ slotReference: true });
 
 export type ConversationContext = z.infer<typeof conversationContextSchema>;
 export type ContextPatch = z.infer<typeof contextPatchSchema>;
@@ -92,6 +99,7 @@ export function applyContextPatch(
   input: unknown,
   message: string,
   courses: readonly ActiveCourseSummary[],
+  eligibleSlots: readonly Slot[] = [],
 ): ConversationContext {
   const patch = contextPatchSchema.parse(input);
   const previous = conversationContextSchema.parse(current);
@@ -122,6 +130,11 @@ export function applyContextPatch(
     courseId,
     slotId: courseId === previous.courseId ? previous.slotId : null,
   };
+  const reference = patch.slotReference;
+  if (reference && containsLiteral(message, reference.evidence)) {
+    const selected = resolveSlotReference(reference, message, eligibleSlots.filter((slot) => slot.courseId === courseId));
+    if (selected) next.slotId = selected;
+  }
   const changed = next.goal !== previous.goal
     || next.name !== previous.name
     || next.contact?.type !== previous.contact?.type

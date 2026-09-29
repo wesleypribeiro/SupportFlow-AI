@@ -57,7 +57,7 @@ describe('POST /api/chat com SDK OpenAI e transporte simulado', () => {
                 function: interpreting
                   ? {
                     name: 'interpret_context_patch',
-                    arguments: JSON.stringify({ goal: null, name: null, contact: null, courseReference: null }),
+                    arguments: JSON.stringify({ goal: null, name: null, contact: null, courseReference: null, slotReference: null }),
                   }
                   : { name: 'get_courses', arguments: '{}' },
               }],
@@ -105,7 +105,7 @@ describe('POST /api/chat com SDK OpenAI e transporte simulado', () => {
             parameters: expect.objectContaining({
               type: 'object',
               additionalProperties: false,
-              required: ['goal', 'name', 'contact', 'courseReference'],
+              required: ['goal', 'name', 'contact', 'courseReference', 'slotReference'],
             }),
           }),
         }),
@@ -117,7 +117,9 @@ describe('POST /api/chat com SDK OpenAI e transporte simulado', () => {
         expect.objectContaining({ type: 'function', function: expect.objectContaining({ name: 'get_school_info' }) }),
         expect.objectContaining({ type: 'function', function: expect.objectContaining({ name: 'get_courses' }) }),
         expect.objectContaining({ type: 'function', function: expect.objectContaining({ name: 'get_course_details' }) }),
+        expect.objectContaining({ type: 'function', function: expect.objectContaining({ name: 'get_available_slots' }) }),
         expect.objectContaining({ type: 'function', function: expect.objectContaining({ name: 'create_lead' }) }),
+        expect.objectContaining({ type: 'function', function: expect.objectContaining({ name: 'schedule_trial_class' }) }),
       ]);
       expect(requests[2]).not.toHaveProperty('tools');
       expect(requests[2]).not.toHaveProperty('tool_choice');

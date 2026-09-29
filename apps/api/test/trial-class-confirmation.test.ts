@@ -35,7 +35,11 @@ describe('confirmação determinística de aula e recibos históricos', () => {
     await Promise.all(servers.splice(0).map((server) => server.close()));
     expect(fetch).not.toHaveBeenCalled();
     for (const model of models.splice(0)) {
-      expect(model.calls).toHaveLength(0); expect(model.contextCalls).toHaveLength(0);
+      expect(model.contextCalls).toHaveLength(0);
+      for (const call of model.calls) {
+        expect(call.options.tools).toBeUndefined();
+        expect(call.messages.some((message) => message.name === 'official_receipt')).toBe(true);
+      }
     }
     vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs();
   });

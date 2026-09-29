@@ -2,7 +2,7 @@ import { chatConfirmationRequestSchema, chatErrorResponseSchema, chatRequestSche
 import type { FastifyInstance } from 'fastify';
 import type { createChatRunner } from './chat.js';
 import type { InMemoryConversations } from './conversations.js';
-import type { ActionDefinition, ActionExecutor, ActionReceipt, InMemoryPendingActions } from './pending-actions.js';
+import type { ActionDefinition, ActionExecutor, ActionReceipt, InMemoryPendingActions, PreparedAction } from './pending-actions.js';
 
 function publicError(code: 'INVALID_REQUEST' | 'NOT_FOUND' | 'ACTION_STALE' | 'CHAT_ERROR') {
   const messages = {
@@ -18,6 +18,7 @@ export function registerChatRoute<Context extends { revision: number }, Definiti
   conversations: InMemoryConversations<Context>;
   actions: InMemoryPendingActions<Definition, Receipt>;
   executeAction?: ActionExecutor<Definition>;
+  describeReceipt?: (action: PreparedAction<Definition>, receipt: Receipt) => Promise<string>;
   runTurn: ReturnType<typeof createChatRunner<Context>>;
   parseResponse: (response: unknown) => unknown;
 }) {
@@ -80,7 +81,7 @@ export function registerChatRoute<Context extends { revision: number }, Definiti
         return await conversations.runExclusive(conversationId, async () => {
           const conversation = conversations.get(conversationId);
           if (!conversation) return reply.code(404).send(publicError('NOT_FOUND'));
-          const outcome = await actions.confirm(conversationId, conversation.context.revision, actionId, executeAction);
+          const outcome = await actions.confirm(conversationId, conversation.context.revision, actionId, executeAction, composition.describeReceipt);
           if (!outcome.ok) {
             return reply.code(outcome.code === 'NOT_FOUND' ? 404 : 409).send(publicError(outcome.code));
           }

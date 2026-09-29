@@ -119,3 +119,9 @@ textarea::placeholder { color: var(--muted); opacity: .85; }
   .demo-note { font-size: 9px; margin: 12px 3px; }
 }
 @media (prefers-reduced-motion: reduce) { .loading-dot { animation: none; } }
+
+.slot-list { list-style: none; padding: 0; display: grid; gap: 10px; }
+.trial-preview { margin-top: 18px; border-color: var(--accent, #285e51); }
+.trial-preview h2 { font-size: 20px; }
+.trial-preview .send-button { max-width: 100%; white-space: normal; margin-top: 12px; }
+.trial-preview, .trial-receipt, .schedule-results { min-width: 0; overflow-wrap: anywhere; }

@@ -51,7 +51,10 @@ export class ScriptedChatModel extends BaseChatModel<ScriptedCallOptions> {
         content: '',
         tool_calls: [{
           name: 'interpret_context_patch',
-          args: patch as Record<string, unknown>,
+          // Roteiros anteriores à agenda omitem o novo campo; o transporte
+          // simulado fornece a ausência explícita exigida pelo structured output.
+          args: patch && typeof patch === 'object' && !Array.isArray(patch)
+            ? { slotReference: null, ...patch } : patch as Record<string, unknown>,
           id: `call_context_${this.contextCalls.length}`,
           type: 'tool_call',
         }],

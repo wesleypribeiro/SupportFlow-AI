@@ -62,7 +62,7 @@ describe('composição da consulta de horários sem efeitos', () => {
     expect(await later.getAvailableSlots({ courseId })).toEqual({ ok: true, data: { courseId, slots: [] } });
   });
 
-  it('não chama o modelo durante consulta nem registra get_available_slots no LangChain', async () => {
+  it('consulta diretamente sem modelo e disponibiliza a tool no chat sem acioná-la para saudação', async () => {
     vi.stubEnv('LANGCHAIN_TRACING_V2', 'false'); vi.stubEnv('LANGSMITH_TRACING', 'false');
     const model = new ScriptedChatModel([new AIMessage('Olá!')]);
     const app = createApplication({}, { now, model });
@@ -74,7 +74,7 @@ describe('composição da consulta de horários sem efeitos', () => {
     expect(chat.statusCode).toBe(200);
     expect(chat.json()).toMatchObject({ results: [], pendingAction: null });
     expect(model.boundTools.map((tool) => 'name' in tool ? tool.name : undefined))
-      .toEqual(['get_school_info', 'get_courses', 'get_course_details', 'create_lead']);
+      .toEqual(['get_school_info', 'get_courses', 'get_course_details', 'get_available_slots', 'create_lead', 'schedule_trial_class']);
     expect(app.conversations.get(chat.json().conversationId)?.context.slotId).toBeNull();
   });
 });

@@ -29,6 +29,7 @@ import { slotFixtures } from './modules/language-school/infrastructure/slot-fixt
 import { createAvailableSlotsTool } from './modules/language-school/infrastructure/available-slots-tool.js';
 import { createScheduleTrialClassTool } from './modules/language-school/infrastructure/trial-class-tool.js';
 import { trialClassFailure } from './modules/language-school/application/prepare-trial-class.js';
+import { createConfirmationReply } from './modules/language-school/infrastructure/confirmation-reply.js';
 
 // Composição explícita: o core não importa nem escolhe o segmento da aplicação.
 export function createApplication(environment: NodeJS.ProcessEnv, options: {
@@ -56,7 +57,7 @@ export function createApplication(environment: NodeJS.ProcessEnv, options: {
     schoolRepository, trialClassRepository, now,
   });
   const catalogTools = createCatalogTools(schoolRepository);
-  const langChainTools = createLangChainSchoolTools(catalogTools, { schoolRepository, leadRepository });
+  const langChainTools = createLangChainSchoolTools(catalogTools, { schoolRepository, leadRepository, trialClassRepository, now });
   const model = options.model ?? (config.llm
     ? new ChatOpenAI({ apiKey: config.llm.apiKey, model: config.llm.model })
     : null);
@@ -81,12 +82,13 @@ export function createApplication(environment: NodeJS.ProcessEnv, options: {
     conversations,
     actions,
     executeAction: options.executeAction ?? createLanguageSchoolConfirmationExecutor({ schoolRepository, leadRepository, trialClassRepository, now, conversations }),
+    describeReceipt: createConfirmationReply(model),
     runTurn: createChatRunner({
       model,
       instructions: languageSchoolInstructions,
       tools: langChainTools.tools,
       executeTool: langChainTools.execute,
-      updateContext: createContextUpdater(model, schoolRepository),
+      updateContext: createContextUpdater(model, schoolRepository, { trialClassRepository, now }),
       describeContext: describeConversationContext,
     }),
     parseResponse: (response) => languageSchoolChatResponseSchema.parse(response),
@@ -107,7 +109,7 @@ export function createApplication(environment: NodeJS.ProcessEnv, options: {
     return { result, pendingAction: actions.pending(conversationId, conversation.context.revision) };
   });
 
-  // Proposta direta sob a fila da conversa; não conecta a tool ao agente nem executa reserva.
+  // Proposta direta sob a fila da conversa, independente do agente e sem executar reserva.
   const prepareTrialClass = (conversationId: string, input: unknown) => conversations.runExclusive(conversationId, async () => {
     const conversation = conversations.get(conversationId);
     if (!conversation) return { result: scheduleTrialClassResultSchema.parse(trialClassFailure('NOT_FOUND')), pendingAction: null };

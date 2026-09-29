@@ -1,6 +1,6 @@
 # Chat da demonstração
 
-A interface das tasks 3.3 e 4.4 usa o App Router do Next.js com estado local no componente `Chat`.
+A interface das tasks 3.3, 4.4 e 5.4 usa o App Router do Next.js com estado local no componente `Chat`.
 Execute `npm run dev` na raiz e abra `http://127.0.0.1:3000`. O modelo e suas
 credenciais são configurados exclusivamente na API; sem modelo, a interface
 apresenta o erro controlado do backend e permite tentar novamente.
@@ -108,3 +108,39 @@ não foi adicionado à suíte nem às dependências de produção.
 divergente, null no objetivo, created/updated/existing, corpo somente com IDs,
 clique duplo, exclusão mútua entre chat e confirmação, mesma/nova/nenhuma ação,
 409, 404, rede/500/envelope inválido e retry com o mesmo ID.
+
+
+## Agenda e recibos de aula — task 5.4
+
+`trial-class-results.tsx` apresenta listas de horários exclusivamente de `results`,
+com data/hora formatadas em pt-BR no timezone oficial. Lista vazia não sugere vagas.
+A prévia usa somente `pendingAction.preview`: aluno, nome do curso, data, hora,
+fuso e aviso de agenda demonstrativa. Seu botão é “Confirmar aula experimental”.
+O mesmo estado `currentPendingAction` e bloqueio de envio atendem cadastro e aula;
+nenhuma autorização de cadastro é reutilizada. Enviam-se somente os dois IDs.
+
+O recibo usa `schedule_trial_class` em `results`: created, existing ou
+SLOT_UNAVAILABLE. O contrato do booking contém courseId, sem nome do curso; o recibo
+exibe esse identificador oficial, sem inferir nomes da prosa. Prosa divergente não
+cria sucesso ou altera dados, e uma falha de redação após a escrita usa o fallback
+do backend. Retry de transporte conserva a mesma ação para recuperar seu recibo.
+
+Verificação da task 5.4 em Chromium via Playwright local, Next e Fastify reais,
+`ScriptedChatModel`, relógio fixo e sem OpenAI:
+
+- Catálogo → curso → horários → escolha → cadastro confirmado → prévia de aula.
+- Troca de 11/06 às 10h para 12/06 às 14h substituiu a prévia; ID anterior retornou
+  409 e somente a nova ação confirmou a reserva.
+- Falha da LLM após a escrita retornou created com mensagem de contingência.
+  A resposta foi então perdida de propósito no transporte: repetir os mesmos IDs
+  recuperou o recibo integral. Uma nova consulta da mesma reserva retornou existing.
+- Ocupação por outro lead depois da prévia retornou SLOT_UNAVAILABLE, sem falso sucesso.
+- Enter, Shift+Enter, foco, processamento e bloqueio de operações simultâneas conferidos.
+- Desktop 1360×900, viewports 390×844 e 320×740: captura inspecionada, botões e
+  data/hora/fuso legíveis, histórico com rolagem e sem transbordamento horizontal.
+  Nenhum erro de execução no browser. Sem dispositivo físico/teclado virtual móvel.
+
+`chat-trial-class.test.tsx` cobre lista/vazio, prévia oficial, labels distintos,
+IDs exclusivos, prosa divergente, outcomes, clique duplo, mesma/nova/nenhuma ação,
+stale e retry de rede/500/envelope inválido. A suíte permanece Vitest/Testing Library
+sem rede externa; Playwright continua apenas uma ferramenta da verificação local.

@@ -73,9 +73,10 @@ export class InMemoryPendingActions<Definition extends ActionDefinition, Receipt
     this.current.delete(conversationId);
   }
 
-  // Executar sob runExclusive da conversa; a rota nunca consulta a LLM aqui.
+  // Executar sob runExclusive da conversa; autorização e escrita independem da redação.
   async confirm(conversationId: string, revision: number, actionId: string,
     execute: ActionExecutor<Definition> | undefined,
+    describe?: (action: PreparedAction<Definition>, receipt: Receipt) => Promise<string>,
   ): Promise<{ ok: true; receipt: Receipt } | { ok: false; code: 'NOT_FOUND' | 'ACTION_STALE' }> {
     const action = this.actions.get(actionId);
     if (!action || action.action.conversationId !== conversationId) return { ok: false, code: 'NOT_FOUND' };
@@ -85,10 +86,20 @@ export class InMemoryPendingActions<Definition extends ActionDefinition, Receipt
     if (action.status === 'stale') return { ok: false, code: 'ACTION_STALE' };
     if (!execute) throw new Error('Executor de confirmação não configurado.');
 
-    const receipt = structuredClone(this.parseReceipt(await execute(structuredClone(action.action))));
+    let receipt = structuredClone(this.parseReceipt(await execute(structuredClone(action.action))));
     // Commit antes de construir/serializar a resposta HTTP. Retry recupera esta cópia.
     this.actions.set(actionId, { ...action, status: 'completed', receipt });
     this.current.delete(conversationId);
+    // O recibo determinístico já existe. Redação opcional nunca desfaz a conclusão.
+    if (describe) {
+      try {
+        const reply = await describe(structuredClone(action.action), structuredClone(receipt));
+        receipt = structuredClone(this.parseReceipt({ ...receipt, reply }));
+        this.actions.set(actionId, { ...action, status: 'completed', receipt });
+      } catch {
+        // Preserve o recibo oficial e sua mensagem determinística de contingência.
+      }
+    }
     return { ok: true, receipt: structuredClone(receipt) };
   }
 

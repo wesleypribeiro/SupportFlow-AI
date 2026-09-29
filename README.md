@@ -2,20 +2,13 @@
 
 Fundação do MVP para escolas de idiomas, seguindo exclusivamente
 [`language-school-sales-mvp`](openspec/changes/language-school-sales-mvp/proposal.md).
-As tasks 1.1 a 4.4 entregam a fundação, os contratos públicos, o catálogo escolar
-e a API de chat com histórico e contexto vigente em memória, além de quatro tools
-via LangChain, a interface de chat, a política de consultas por turno e a infraestrutura
-de ações pendentes com confirmação por IDs e a política de cadastro/revisão do lead.
-O cadastro está integrado ao agente e à interface, com prévia e confirmação explícita.
-A task 5.1 acrescenta a consulta determinística de horários da agenda demonstrativa,
-disponível internamente como `app.getAvailableSlots({ courseId })`, sem integração
-ao modelo ou à UI. A task 5.2 acrescenta `app.prepareTrialClass(conversationId,
-{ leadId, slotId })`: valida cadastro/contexto e agenda, retornando
-`CONFIRMATION_REQUIRED` e uma prévia oficial, sem ocupar a vaga. Essa operação
-também permanece interna, sem registro no agente ou UI. A task 5.3 implementa a
-reserva real em memória pelo `/api/chat/confirm`, com ocupação atômica por slot,
-resultados `created`/`existing`, conflito `SLOT_UNAVAILABLE` e recibos históricos.
-A integração da agenda ao agente e à UI permanece para a task 5.4.
+As tasks 1.1 a 5.4 entregam contratos estritos, catálogo, chat com contexto em memória,
+cadastro confirmado e agenda demonstrativa com reserva atômica e recibos históricos.
+O agente dispõe de seis tools: `get_school_info`, `get_courses`, `get_course_details`,
+`get_available_slots`, `create_lead` e `schedule_trial_class`. Cadastro e reserva
+exigem prévia oficial e confirmação específica por IDs em `/api/chat/confirm`.
+O frontend apresenta horários, prévias e recibos exclusivamente do backend.
+Uma falha da LLM depois da reserva preserva o resultado com mensagem determinística.
 
 ## Executar localmente
 
@@ -253,7 +246,11 @@ exclusão de campos. Paráfrases que não aparecem na mensagem atual são rejeit
 Curso é associado por ID exato, nome ou idioma sem diferenciar maiúsculas/minúsculas,
 desde que a referência identifique uma única opção ativa no catálogo consultado pelo
 `SchoolRepository`. Referência inventada, inativa, ausente ou ambígua mantém o curso
-anterior. Não há resolução semântica avançada de cursos. `slotId` continua `null`;
+anterior. Não há resolução semântica avançada de cursos. Na task 5.4, o interpretador
+propõe uma referência de horário com evidência na mensagem atual. O backend revalida
+a referência contra as vagas oficiais futuras do curso antes de alterar `slotId`.
+Outra seleção incrementa revisão; repetir a seleção não incrementa; trocar curso
+limpa o horário. Escolha ambígua preserva o estado e exige esclarecimento.
 `leadId` começa `null` e só recebe o ID salvo após confirmação de cadastro. O patch
 da LLM não pode criar horários, leads ou alterar a revisão diretamente.
 

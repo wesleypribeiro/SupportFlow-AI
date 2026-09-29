@@ -5,10 +5,10 @@ ao chat na task 3.1, com contexto vigente na task 3.2 e política de atendimento
 consolidada na task 3.4. As tasks 4.2 e 4.3 acrescentam a preparação de cadastro,
 criação/atualização confirmadas e reconhecimento de lead idêntico sem escrita.
 A task 4.4 conecta essa operação ao chat e à interface. Usa os contratos aprovados na task 2.1.
-A task 5.1 acrescenta a consulta de disponibilidade da agenda interna, ainda sem
-registro no LangChain nem seleção conversacional de horários.
+A task 5.1 acrescenta a consulta de disponibilidade da agenda interna.
 A task 5.2 acrescenta somente a proposta determinística de aula experimental.
 A task 5.3 acrescenta reserva atômica e recibo determinístico pela confirmação HTTP.
+A task 5.4 conecta consulta, seleção, proposta e recibo ao chat e à interface.
 
 ## Organização
 
@@ -25,7 +25,7 @@ A task 5.3 acrescenta reserva atômica e recibo determinístico pela confirmaç�
   conversão de falhas para resultados públicos.
 - `infrastructure/langchain-catalog-tools.ts`: adaptação das três consultas para
   tool calling, sem mudar domínio, casos de uso ou repositório.
-- `infrastructure/langchain-tools.ts`: combina catálogo e `create_lead`, com escopo
+- `infrastructure/langchain-tools.ts`: combina catálogo, `create_lead` e as duas tools de agenda, com escopo
   de execução fornecido pelo backend e propostas locais ao turno.
 - `infrastructure/langchain-context.ts`: interpretação estruturada pelo mesmo modelo
   e descrição do contexto vigente para o atendimento.
@@ -46,7 +46,7 @@ Argumentos rejeitados pelo LangChain são convertidos em `INVALID_INPUT` sanitiz
 O contexto pertence ao módulo escolar; o core armazena e transporta seu tipo por
 composição, sem conhecer regras de aluno ou curso. `ConversationContext` mantém
 `goal`, `name`, `contact`, `courseId`, `slotId`, `leadId` e `revision`. A interpretação
-propõe somente `goal`, `name`, `contact` e `courseReference`, com `null` significando
+propõe `goal`, `name`, `contact`, `courseReference` e `slotReference`, com `null` significando
 preservar. O patch usa schemas internos, sem ampliar contratos públicos.
 
 `applyContextPatch` valida a proposta inteira antes de aplicar mudanças. Alterações
@@ -90,8 +90,8 @@ com papel `tool`; não se tornam mensagens de sistema nem modificam as ferrament
 disponíveis. A prosa não altera `results`, cria recibos ou autoriza operações.
 O prompt orienta coleta de dados faltantes, uso do contexto vigente no cadastro e
 revisão da prévia com o botão. Uma tool call ou “Sim” não autoriza escrita. Apenas
-resultados oficiais permitem explicar cadastro concluído; agendamento, reserva e
-transferência continuam indisponíveis.
+resultados oficiais permitem explicar operações concluídas. Transferência para
+humano continua indisponível.
 
 `chat-policy.test.ts` usa `ScriptedChatModel`, os adapters reais e `server.inject()`:
 verifica objetivo sem consulta, catálogo seguido de detalhes por ID oficial,
@@ -355,7 +355,7 @@ fornecem estado interno validado com a nova revisão.
 `infrastructure/trial-class-tool.ts` recebe somente `{ leadId, slotId }` como
 entrada pública. Usa `scheduleTrialClassInputSchema` e
 `scheduleTrialClassResultSchema`, sem coerção ou campos extras. O escopo do backend
-é um parâmetro separado. Não foi registrada uma quinta tool no LangChain.
+é um parâmetro separado. A task 5.4 acrescenta seu adapter ao LangChain, com escopo separado do input.
 
 A prévia `{ lead, course, slot }` é validada pelo contrato existente. `lead` e
 `slot` são registros oficiais; `course` projeta somente os campos do resumo ativo
@@ -429,7 +429,7 @@ determinística sobre a agenda demonstrativa.
 
 `infrastructure/action-confirmation.ts` faz o dispatcher explícito por `kind`
 entre os executores de cadastro e aula. O core e os contratos públicos não mudaram.
-As tools de agenda continuam ausentes do LangChain, e não há UI de reserva.
+A integração ao LangChain e à UI foi acrescentada na task 5.4, descrita abaixo.
 
 | Situação | Resultado |
 | --- | --- |
@@ -459,3 +459,50 @@ conversas simultaneamente na disputa: exatamente uma vence. Cobre revalidação,
 falha antes da escrita, falha de envio após o recibo salvo, retries históricos,
 regressão de cadastro e reservas preservadas após updates. Nenhum teste depende
 de credenciais, rede ou OpenAI real.
+
+
+## Agenda no chat e contingência após escrita — task 5.4
+
+As seis tools do módulo usam schemas públicos existentes. `get_available_slots`
+delega à consulta determinística, sem selecionar/ocupar vagas. O adapter de
+`schedule_trial_class` exige `context.slotId`, usa o escopo interno da conversa e
+chama `scope.proposeAction`, assim como o cadastro. Não chama `actions.prepare`
+durante o turno. A proposta permanece local até redação e validação do envelope;
+falha preserva contexto, histórico e a ação anterior, sem ação órfã.
+
+O mesmo modelo interpreta `slotReference: { slotId, evidence } | null`, recebendo
+os slots oficiais elegíveis do curso vigente em mensagem de sistema marcada como
+dados. Evidence deve ser trecho literal da mensagem atual; o backend reconsulta
+as vagas com relógio injetado, valida curso, futuro, ocupação e schema antes de
+aplicar o ID. `domain/slot-reference.ts` exige uma data e uma hora explícitas tanto
+na evidência quanto na mensagem inteira. Aceita DD/MM com ano opcional ou data por
+extenso em português, combinada com HH:mm, Hh ou HhMM. Compara esses componentes
+com `startsAt` no `timezone` oficial, como na apresentação da UI. Exige exatamente
+um slot elegível correspondente e o mesmo ID proposto: evidência de A não autoriza B.
+Várias datas/horas, slots indistinguíveis, referência genérica, relativa ou incompleta
+preservam a seleção e a revisão. Recortar evidence de uma mensagem com duas opções
+não contorna essa validação. Não há resolução de ordinais ou NLP de datas relativas;
+o agente pede uma única data e hora no fuso apresentado. A interpretação de intenção
+continua probabilística, mas a associação entre data/hora explícitas e slot é determinística.
+
+Mesma seleção não incrementa revisão. Outra seleção válida incrementa uma vez e
+invalida a prévia anterior no commit do turno. Trocar curso limpa o horário. O
+patch interno ganhou esse campo; os contratos públicos permanecem inalterados.
+O atendimento recebe o contexto atualizado antes de selecionar tools. Corrigir
+cadastro ainda exige confirmação separada antes de propor aula.
+
+A confirmação encaminha somente IDs ao lifecycle, depois ao executor escolar e
+`reserveSlot`. O core salva primeiro o recibo determinístico concluído. Só depois
+o callback do módulo `confirmation-reply.ts` usa o modelo sem tools para explicar
+o resultado da aula. Erro, tool call, conteúdo não textual/vazio ou resposta fora
+do schema conserva a mensagem determinística e todos os resultados, com HTTP 200.
+Uma redação válida altera somente reply e é salva no recibo. Retry do mesmo actionId
+recupera esse snapshot sem escrita nem nova chamada ao modelo. A confirmação de
+cadastro continua com redação determinística e não autoriza a aula.
+
+Testes novos: `chat-trial-class.test.ts` cobre slots oficiais, seleção e revisão,
+propostas, Sim, ação antiga, lead divergente, atomicidade em falha, conflito,
+existing, prosa divergente e fallback após escrita. `pending-actions.test.ts`
+verifica que o recibo já é recuperável durante a redação e protege resultados contra
+mutação pelo redator. Correções reais pelo chat de contato/objetivo/curso/horário e
+update confirmado do lead deixam a reserva e o recibo anterior intactos.

@@ -74,7 +74,7 @@ describe('proposta de aula: vínculo, revisão e autorizações distintas', () =
     await expectNoBookings(app);
   });
 
-  it('mantém a proposta sem integrar tools de agenda ao chat normal', async () => {
+  it('mantém a proposta com proposta direta independente do LangChain ao chat normal', async () => {
     const app = application(new ScriptedChatModel([new AIMessage('Pode revisar a prévia.') ]));
     const current = await registeredConversation(app);
     const action = await proposal(app, current.id);
@@ -85,7 +85,7 @@ describe('proposta de aula: vínculo, revisão e autorizações distintas', () =
     expect(chat.json().pendingAction).toEqual(action);
     expect(app.conversations.get(current.id)?.context).toEqual(current.context);
     expect(app.model.boundTools.map((tool) => 'name' in tool ? tool.name : undefined))
-      .toEqual(['get_school_info', 'get_courses', 'get_course_details', 'create_lead']);
+      .toEqual(['get_school_info', 'get_courses', 'get_course_details', 'get_available_slots', 'create_lead', 'schedule_trial_class']);
   });
 
   it.each(['args', 'leadId', 'slotId', 'courseId', 'confirmed', 'revision', 'preview'])(

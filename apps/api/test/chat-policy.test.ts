@@ -163,7 +163,7 @@ describe('política e fronteiras do atendimento escolar', () => {
     expect(model.contextCalls).toHaveLength(1);
     expect(model.calls).toHaveLength(2);
     expect(model.boundTools.map((tool) => 'name' in tool ? tool.name : undefined))
-      .toEqual(['get_school_info', 'get_courses', 'get_course_details', 'create_lead']);
+      .toEqual(['get_school_info', 'get_courses', 'get_course_details', 'get_available_slots', 'create_lead', 'schedule_trial_class']);
     const selection = model.calls[0]!.messages;
     const final = model.calls[1]!.messages;
     const message = final.find((entry): entry is ToolMessage => entry instanceof ToolMessage);

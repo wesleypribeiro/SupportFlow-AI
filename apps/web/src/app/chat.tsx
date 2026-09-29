@@ -6,6 +6,7 @@ import type { LanguageSchoolChatResponse } from '@supportflow/contracts/language
 import { confirmChatAction, sendChatMessage } from './chat-api';
 import { CatalogResults } from './catalog-results';
 import { LeadPreview, LeadResults } from './lead-results';
+import { TrialClassPreview, TrialClassResults } from './trial-class-results';
 
 type Turn = {
   id: number;
@@ -147,14 +148,17 @@ export function Chat() {
                   <p className="message-text">{turn.response.reply}</p>
                   <CatalogResults results={turn.response.results} />
                   <LeadResults results={turn.response.results} />
+                  <TrialClassResults results={turn.response.results} />
                 </article>
               )}
             </div>
           ))}
           {currentPendingAction && <LeadPreview action={currentPendingAction} disabled={busy || missing}
             confirming={confirming} retry={confirmationError?.kind === 'retry'} onConfirm={confirm} />}
+          {currentPendingAction && <TrialClassPreview action={currentPendingAction} disabled={busy || missing}
+            confirming={confirming} retry={confirmationError?.kind === 'retry'} onConfirm={confirm} />}
           {sending && <p className="processing" role="status"><span className="loading-dot" aria-hidden="true" /> Preparando sua resposta…</p>}
-          {confirming && <p className="processing" role="status">Confirmando seu cadastro…</p>}
+          {confirming && <p className="processing" role="status">{currentPendingAction?.kind === 'schedule_trial_class' ? 'Confirmando sua aula…' : 'Confirmando seu cadastro…'}</p>}
         </div>
         <footer className="composer-area">
           {error && (

@@ -257,7 +257,7 @@ describe('primeiro lead: proposta separada da confirmação HTTP', () => {
     expect(response.statusCode).toBe(200);
     expect(response.json().pendingAction).toBeNull();
     const names = app.model.boundTools.map((tool) => 'name' in tool ? tool.name : 'function' in tool ? tool.function?.name : undefined);
-    expect(names.sort()).toEqual(['create_lead', 'get_course_details', 'get_courses', 'get_school_info']);
+    expect(names.sort()).toEqual(['create_lead', 'get_available_slots', 'get_course_details', 'get_courses', 'get_school_info', 'schedule_trial_class']);
   });
 
   it('não prepara cadastro para conversa inexistente', async () => {

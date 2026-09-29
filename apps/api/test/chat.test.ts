@@ -58,7 +58,7 @@ describe('POST /api/chat com modelo LangChain simulado', () => {
     expect(model.calls[0]?.messages.at(-1)).toBeInstanceOf(HumanMessage);
     expect(model.calls[0]?.messages.at(-1)?.content).toBe('Olá!');
     expect(model.boundTools.map((tool) => 'name' in tool ? tool.name : undefined).sort())
-      .toEqual(['create_lead', 'get_course_details', 'get_courses', 'get_school_info']);
+      .toEqual(['create_lead', 'get_available_slots', 'get_course_details', 'get_courses', 'get_school_info', 'schedule_trial_class']);
   });
 
   it.each([
@@ -301,7 +301,7 @@ describe('POST /api/chat com modelo LangChain simulado', () => {
     },
   );
 
-  it.each(['unknown_tool', 'schedule_trial_class'])(
+  it.each(['unknown_tool', 'transfer_to_human'])(
     'não executa tool desconhecida ou ainda indisponível: %s', async (name) => {
       const model = new ScriptedChatModel([toolCall(name, {})]);
       const { server } = application(model);

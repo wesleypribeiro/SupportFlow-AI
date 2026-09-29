@@ -1,6 +1,6 @@
 import type { ToolCall } from '@langchain/core/messages';
 import { tool } from '@langchain/core/tools';
-import { createLeadInputSchema } from '@supportflow/contracts/language-school';
+import { createLeadInputSchema, getAvailableSlotsInputSchema, scheduleTrialClassInputSchema } from '@supportflow/contracts/language-school';
 import type { ToolExecutionScope } from '../../../core/chat.js';
 import type { ConversationContext } from '../domain/conversation-context.js';
 import type { LeadRepository } from '../domain/lead-repository.js';
@@ -8,12 +8,23 @@ import type { SchoolRepository } from '../domain/school-repository.js';
 import type { createCatalogTools } from './catalog-tools.js';
 import { contentAndArtifact, createLangChainCatalogTools, executeLanguageSchoolTool } from './langchain-catalog-tools.js';
 import { createLeadTool } from './lead-tool.js';
+import type { TrialClassRepository } from '../domain/trial-class-repository.js';
+import { createAvailableSlotsTool } from './available-slots-tool.js';
+import { createScheduleTrialClassTool } from './trial-class-tool.js';
+import { trialClassFailure } from '../application/prepare-trial-class.js';
 
 export function createLangChainSchoolTools(catalogTools: ReturnType<typeof createCatalogTools>, repositories: {
   schoolRepository: SchoolRepository;
   leadRepository: LeadRepository;
+  trialClassRepository: TrialClassRepository;
+  now: () => Date;
 }) {
   const catalog = createLangChainCatalogTools(catalogTools);
+  const available = createAvailableSlotsTool(repositories);
+  const slotsAdapter = tool(async (input) => contentAndArtifact({ tool: 'get_available_slots', result: await available(input) }), {
+    name: 'get_available_slots', schema: getAvailableSlotsInputSchema, responseFormat: 'content_and_artifact',
+    description: 'Consulta horários futuros e livres cadastrados para um curso ativo. Não seleciona nem reserva uma vaga.',
+  });
 
   // A declaração enviada ao modelo contém somente o schema público. A closure
   // de execução recebe o escopo validado do turno, nunca argumentos da LLM.
@@ -34,11 +45,29 @@ export function createLangChainSchoolTools(catalogTools: ReturnType<typeof creat
     });
   }
 
+  function scheduleAdapter(scope?: ToolExecutionScope<ConversationContext>) {
+    return tool(async (input) => {
+      if (!scope) throw new Error('Escopo de execução ausente.');
+      const schedule = createScheduleTrialClassTool({
+        ...repositories,
+        prepareAction: (_scope, preview) => scope.proposeAction({ kind: 'schedule_trial_class', preview }),
+        clearPendingAction: () => scope.proposeAction(null),
+      });
+      return contentAndArtifact({ tool: 'schedule_trial_class', result: scope.context.slotId === null
+        ? trialClassFailure('INVALID_INPUT') : await schedule(input, scope) });
+    }, {
+      name: 'schedule_trial_class', schema: scheduleTrialClassInputSchema, responseFormat: 'content_and_artifact',
+      description: 'Propõe aula para leadId oficial atualizado e slotId vigente do contexto. Somente PREPARA confirmação específica; não ocupa vaga nem representa consentimento. Mesma reserva já concluída retorna existing.',
+    });
+  }
+
   return {
-    tools: [...catalog.tools, leadAdapter()],
-    execute: (call: ToolCall, scope: ToolExecutionScope<ConversationContext>) =>
-      call.name === 'create_lead'
-        ? executeLanguageSchoolTool([leadAdapter(scope)], call, 'Entrada inválida para o cadastro.')
-        : catalog.execute(call),
+    tools: [...catalog.tools, slotsAdapter, leadAdapter(), scheduleAdapter()],
+    execute: (call: ToolCall, scope: ToolExecutionScope<ConversationContext>) => {
+      if (call.name === 'create_lead') return executeLanguageSchoolTool([leadAdapter(scope)], call, 'Entrada inválida para o cadastro.');
+      if (call.name === 'get_available_slots') return executeLanguageSchoolTool([slotsAdapter], call, 'Entrada inválida para horários.');
+      if (call.name === 'schedule_trial_class') return executeLanguageSchoolTool([scheduleAdapter(scope)], call, 'Entrada inválida para a aula experimental.');
+      return catalog.execute(call);
+    },
   };
 }
