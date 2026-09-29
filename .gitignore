@@ -27,6 +27,7 @@ Thumbs.db
 *.zip
 
 # OpenSpec: configuração, specs, histórico e changes autorizadas
+openspec/
 /openspec/*
 !/openspec/config.yaml
 !/openspec/config.yml
