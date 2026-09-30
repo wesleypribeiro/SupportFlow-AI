@@ -6,6 +6,7 @@ import { languageSchoolChatResponseSchema } from '@supportflow/contracts/languag
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApplication } from '../src/app.js';
 import { verifyWebhookHandshake, verifyWebhookSignature } from '../src/channels/whatsapp/meta/webhook-security.js';
+import * as projection from '../src/channels/whatsapp/meta/webhook-projection.js';
 import { InMemoryPendingActions } from '../src/core/pending-actions.js';
 import { InMemorySchoolRepository } from '../src/modules/language-school/infrastructure/in-memory-school-repository.js';
 import { InMemoryLeadRepository } from '../src/modules/language-school/infrastructure/in-memory-lead-repository.js';
@@ -15,6 +16,7 @@ import { courseFixtures, schoolFixture } from '../src/modules/language-school/in
 import { slotFixtures } from '../src/modules/language-school/infrastructure/slot-fixtures.js';
 import { ScriptedChatModel } from './helpers/scripted-chat-model.js';
 import { createJourneyModel, leadTurn } from './helpers/journey-script.js';
+import { metaButton, metaChange, metaEnvelope, metaStatus, metaText } from './helpers/meta-webhook.js';
 
 const path = '/webhooks/whatsapp/meta';
 const limit = 1_048_576;
@@ -25,7 +27,7 @@ const environment = {
   META_GRAPH_API_VERSION: 'v26.0', WHATSAPP_DEMO_RECIPIENTS: 'demo-recipient',
 };
 const query = { 'hub.mode': 'subscribe', 'hub.verify_token': environment.META_WEBHOOK_VERIFY_TOKEN, 'hub.challenge': '000123' };
-const payload = Buffer.from('{"object":"whatsapp_business_account"}', 'utf8');
+const payload = Buffer.from(JSON.stringify(metaEnvelope()), 'utf8');
 function sign(body: Buffer, secret = environment.META_APP_SECRET) {
   return `sha256=${createHmac('sha256', secret).update(body).digest('hex')}`;
 }
@@ -33,9 +35,9 @@ function handshakeUrl(values: Record<string, string> = query) {
   return `${path}?${new URLSearchParams(values)}`;
 }
 function bodyWithBytes(size: number) {
-  const shell = Buffer.from('{"text":""}');
+  const shell = Buffer.from(JSON.stringify(metaEnvelope(undefined, { text: '' })));
   const content = 'á'.repeat(Math.floor((size - shell.length) / 2)) + 'x'.repeat((size - shell.length) % 2);
-  const body = Buffer.from(JSON.stringify({ text: content }));
+  const body = Buffer.from(JSON.stringify(metaEnvelope(undefined, { text: content })));
   assert.equal(body.length, size);
   return body;
 }
@@ -208,7 +210,7 @@ describe('POST /webhooks/whatsapp/meta — bytes antes do JSON', () => {
 
   it('JSON semanticamente igual com bytes diferentes exige outra assinatura', async () => {
     const app = application();
-    const spaced = Buffer.from('{ "object": "whatsapp_business_account" }');
+    const spaced = Buffer.from(JSON.stringify(metaEnvelope(), null, 2));
     expect(JSON.parse(payload.toString())).toEqual(JSON.parse(spaced.toString()));
     expect((await post(app, spaced, sign(payload))).statusCode).toBe(403);
     expect((await post(app, spaced)).statusCode).toBe(200);
@@ -221,7 +223,7 @@ describe('POST /webhooks/whatsapp/meta — bytes antes do JSON', () => {
   });
 
   it('assina UTF-8 multibyte completo sem conversão antes da autenticação', async () => {
-    const body = Buffer.from('{"text":"Olá 👋"}');
+    const body = Buffer.from(JSON.stringify(metaEnvelope([metaChange({ messages: [metaText()] })])));
     expect(body.length).toBeGreaterThan(body.toString().length);
     expect((await post(application(), body)).statusCode).toBe(200);
   });
@@ -236,8 +238,8 @@ describe('POST /webhooks/whatsapp/meta — bytes antes do JSON', () => {
     expect((await post(application(), invalid)).statusCode).toBe(400);
   });
 
-  it.each(['{}', '{"object":"not-validated-yet","entry":"not-projected"}'])('valida só objeto básico nesta etapa, sem origem/projeção (%s)', async (input) => {
-    expect((await post(application(), Buffer.from(input))).statusCode).toBe(200);
+  it.each(['{}', '{"object":"not-validated-yet","entry":"not-projected"}'])('objeto sem estrutura Meta válida agora é rejeitado (%s)', async (input) => {
+    expect((await post(application(), Buffer.from(input))).statusCode).toBe(400);
   });
 
   it.each([limit - 1, limit])('aceita %i bytes, incluindo caracteres multibyte', async (size) => {
@@ -290,6 +292,73 @@ describe('POST /webhooks/whatsapp/meta — bytes antes do JSON', () => {
     const responses = await Promise.all([post(app), post(app), app.server.inject({ method: 'GET', url: handshakeUrl() })]);
     expect(responses.map((response) => response.statusCode)).toEqual([200, 200, 200]);
     // afterEach verifica todas as leituras/escritas comerciais, serviço, modelo e runExclusive.
+  });
+});
+
+describe('POST /webhooks/whatsapp/meta — projeção validada', () => {
+  it('projeta o lote assinado completo; status/botão permanecem separados de texto', async () => {
+    const project = vi.spyOn(projection, 'projectMetaWebhook');
+    const input = metaEnvelope([], { entry: [
+      { id: environment.META_WABA_ID, changes: [
+        metaChange({ messages: [metaText(), metaButton()], statuses: [metaStatus(), metaStatus({ status: 'sent' })] }),
+        metaChange({ messages: [metaText({ id: 'second-change' })] }),
+      ] },
+      { id: environment.META_WABA_ID, changes: [metaChange({ statuses: [metaStatus({ status: 'read' }), metaStatus({ status: 'failed' })] })] },
+    ] });
+    const response = await post(application(), Buffer.from(JSON.stringify(input)));
+    expect(response.statusCode).toBe(200); expect(response.body).toBe('');
+    expect(project).toHaveBeenCalledOnce();
+    const result = project.mock.results[0]?.value as projection.MetaProjectionResult;
+    expect(result.status).toBe(200);
+    assert(result.status === 200);
+    expect(result.events.map((event) => event.type)).toEqual(['text', 'button_reply', 'status', 'status', 'text', 'status', 'status']);
+    expect(result.events.filter((event) => event.type === 'status').map((event) => event.status)).toEqual(['delivered', 'sent', 'read', 'failed']);
+  });
+
+  it.each([
+    metaEnvelope(undefined, { object: 'foreign-object' }),
+    metaEnvelope([], { entry: [
+      { id: environment.META_WABA_ID, changes: [metaChange({ messages: [metaText()] })] },
+      { id: 'foreign-account', changes: [metaChange({ messages: [metaButton()] })] },
+    ] }),
+    metaEnvelope([metaChange({ messages: [metaText()] }), metaChange({ metadata: { phone_number_id: 'foreign-number' }, statuses: [metaStatus()] })]),
+  ])('rejeita origem divergente mesmo depois de itens válidos sem acessar conversas', async (input) => {
+    const response = await post(application(), Buffer.from(JSON.stringify(input)));
+    expect(response.statusCode).toBe(403); expect(response.body).toBe('');
+  });
+
+  it('só interpreta origem/itens após verificar assinatura', async () => {
+    const project = vi.spyOn(projection, 'projectMetaWebhook');
+    const response = await post(application(), Buffer.from(JSON.stringify(metaEnvelope(undefined, { object: 'foreign' }))), 'invalid');
+    expect(response.statusCode).toBe(403);
+    expect(project).not.toHaveBeenCalled();
+  });
+
+  it('isola itens inválidos e ignora mídia/tipos desconhecidos sem modelo, download ou negócio', async () => {
+    const project = vi.spyOn(projection, 'projectMetaWebhook');
+    const app = application();
+    const observations = vi.fn();
+    app.server.addHook('onRequest', async (request) => {
+      vi.spyOn(request.log, 'info').mockImplementation(observations);
+    });
+    const unsupported = ['image', 'audio', 'video', 'document', 'sticker', 'reaction', 'button', 'future-type']
+      .map((type) => metaText({ type, [type]: { id: 'media', url: 'https://example.invalid/no-download', caption: 'Confirme' } }));
+    const input = metaEnvelope([metaChange({
+      messages: [metaText(), null, metaText({ timestamp: 'NaN' }), ...unsupported,
+        metaButton({ interactive: { type: 'list_reply', list_reply: { id: 'foreign' } } }), metaButton()],
+      statuses: [metaStatus(), metaStatus({ id: 123 }), metaStatus({ status: 'deleted' })],
+    })]);
+    const response = await post(app, Buffer.from(JSON.stringify(input)));
+    expect(response.statusCode).toBe(200); expect(response.body).toBe('');
+    const result = project.mock.results[0]?.value as projection.MetaProjectionResult;
+    assert(result.status === 200);
+    expect(result.events.map((event) => event.type)).toEqual(['text', 'button_reply', 'status']);
+    expect(result.observations).toEqual({ INVALID_MESSAGE: 2, INVALID_STATUS: 1, UNSUPPORTED_MESSAGE: 9, UNSUPPORTED_STATUS: 1, UNSUPPORTED_CHANGE: 0 });
+    expect(observations).toHaveBeenCalledExactlyOnceWith({
+      code: 'WHATSAPP_WEBHOOK_ITEMS_IGNORED',
+      counts: { INVALID_MESSAGE: 2, INVALID_STATUS: 1, UNSUPPORTED_MESSAGE: 9, UNSUPPORTED_STATUS: 1, UNSUPPORTED_CHANGE: 0 },
+    });
+    // afterEach verifica fetch, modelo, repositories reais, serviço e ações.
   });
 });
 

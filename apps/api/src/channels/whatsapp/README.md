@@ -1,9 +1,9 @@
-# Fronteira WhatsApp — tasks 2.1 e 2.2
+# Fronteira WhatsApp — tasks 2.1 a 2.3
 
 Esta etapa disponibiliza configuração backend, tipos de transporte e um webhook
 de validação. `createApplication(environment)` compõe `config.whatsapp` e registra
 GET/POST `/webhooks/whatsapp/meta` somente quando habilitado. Desabilitado, ambos
-retornam 404. Ainda não instancia cliente, processa eventos ou envia mensagens.
+retornam 404. Projeta eventos validados, mas ainda não os admite/processa nem envia mensagens.
 O core, as sete tools, os contratos públicos e o frontend permanecem independentes.
 
 ## Configuração
@@ -84,15 +84,15 @@ comparado como 32 bytes com `timingSafeEqual`, guardado por igualdade de tamanho
 Não há parse/restringificação antes da assinatura.
 
 Somente depois de autenticar os bytes, o handler decodifica UTF-8 estritamente e
-executa `JSON.parse`. JSON inválido, null, array ou primitivo produzem 400;
-objeto JSON produz **200 vazio**. Content-Type não suportado também gera 400
+executa `JSON.parse`. JSON inválido, null, array ou primitivo produzem 400.
+Na 2.3, o objeto também passa pela validação de envelope/origem abaixo antes do
+**200 vazio**. Content-Type não suportado também gera 400
 vazio. O handler de erro é local: não retorna corpo recebido, query, assinatura,
 segredos ou exceções, nem introduz logs desses dados.
 
-**O 200 da task 2.2 significa apenas aceite criptográfico/formal.** Não valida
-WABA/número empresarial, não projeta mensagens/status, não admite inbox, não
-deduplica e não persiste eventos. A projeção pertence à 2.3; admissão antes do
-ACK, ao Milestone 3. Este estágio não oferece a garantia final da spec de
+**O 200 atual significa validação criptográfica, de origem e projeção.** Ainda
+não admite inbox, deduplica ou persiste eventos. Admissão antes do ACK pertence
+ao Milestone 3. Este estágio não oferece a garantia final da spec de
 recepção/processamento. Não é uma integração WhatsApp funcional.
 
 GET/POST não recebem dependências de serviço/modelo/repos/ações/transporte, não
@@ -100,9 +100,49 @@ adquirem `runExclusive` e não criam conversa. O parser e os erros de
 `/api/chat` e `/api/chat/confirm` permanecem nos seus escopos originais.
 Fontes e distinção dos segredos: [compatibilidade Meta](meta/compatibility.md).
 
+## Projeção de lotes — task 2.3
+
+`meta/webhook-projection.ts` recebe somente JSON autenticado pela rota e não faz
+I/O. Valida a estrutura básica (`entry[]`, `changes[]`, `value`, metadata e arrays
+opcionais `messages[]`/`statuses[]`); estrutura inválida produz 400. Verifica
+`object=whatsapp_business_account`, cada WABA e cada `phone_number_id` contra a
+configuração antes de projetar qualquer item. Origem divergente, inclusive no
+fim de um lote misto, produz 403 sem liberar eventos parciais.
+
+Todos os itens das alterações `field=messages` são examinados. A união Zod
+estrita em `events.ts` contém:
+
+- `text`: identidade de transporte, `text` e `replyToMessageId` opcional.
+- `button_reply`: identidade, `reference` e `replyToMessageId` obrigatório,
+  derivados de `interactive.button_reply.id` e `context.id`. Não confirma ações.
+- `status`: ID da mensagem enviada, `sent|delivered|read|failed` e destinatário
+  quando informado. Não equivale a mensagem do visitante nem aceite HTTP.
+
+Todos carregam `provider`, `accountId`, `phoneNumberId`, `messageId` e
+`occurredAt` (milissegundos Unix). IDs permanecem opacos, sem trim/conversão;
+remetente vem somente de `messages[].from`. Limites locais: IDs de até 1.024,
+discriminadores de até 128, referência de até 256 e texto de até 4.096 unidades
+UTF-16. São limites da recepção deste adapter, não alegações sobre todos os
+formatos/limites do provedor. Texto é preservado integralmente, inclusive vazio
+ou acima de 2.000, para a orientação/validação do motor prevista na 4.3.
+
+Timestamp aceita somente string de dígitos (até 16), converte segundos para
+milissegundos e exige inteiro seguro não negativo representável por `Date`.
+Não usa hora da reentrega, não reordena e não deduplica eventos. Marco de reinício
+e avaliação temporal com clock/janela pertencem às tasks 3.3 e 6.3.
+
+Extensões externas são descartadas em todos os níveis: perfil, contatos,
+`context.from`, título do botão, billing, erros brutos, `confirmed`, IDs internos,
+histórico e configuração de modelo não se tornam estado nem autorização.
+Itens de mensagem/status inválidos são isolados; contagens por códigos fixos
+registram `INVALID_MESSAGE`, `INVALID_STATUS` ou tipos não suportados, sem
+payload/identificadores. Mídia, reação, botão de template, list reply e tipos
+desconhecidos não geram evento, download, modelo ou escrita comercial. A
+correlação/autorização de referências de botão permanece para o Milestone 5.
+
 ## Verificação local
 
-`npm test -- apps/api/test/whatsapp-config.test.ts apps/api/test/whatsapp-boundaries.test.ts apps/api/test/whatsapp-webhook.test.ts`
+`npm test -- apps/api/test/whatsapp-config.test.ts apps/api/test/whatsapp-boundaries.test.ts apps/api/test/whatsapp-webhook.test.ts apps/api/test/whatsapp-projection.test.ts`
 exercita configuração/startup com sentinelas, contratos de transporte e isolamento
 do frontend/core. Não lê `.env` nem exige rede. A inspeção de fontes inclui
 Next config e contratos compartilhados, impedindo imports do backend e acesso ao env.
@@ -111,8 +151,13 @@ A suíte do webhook utiliza `server.inject()`, HMAC de buffers de teste e spies
 sobre repositories reais para verificar ausência de efeitos. Cobre queries,
 assinaturas, ordem da validação, UTF-8, corpos equivalentes com bytes diferentes,
 limite exato/excedido/streaming e regressão dos dois endpoints web.
+Os testes de projeção cobrem lotes completos, origem divergente, timestamps,
+extensões sem autoridade, descarte isolado e tipos ignorados. As fixtures dos
+testes anteriores agora usam envelope autorizado; todas as expectativas de
+assinatura, bytes, limite e contratos web permanecem preservadas. Apenas o
+aceite provisório de objetos sem estrutura Meta mudou de 200 para 400.
 
-A validação desta etapa também executa build com segredos sentinela fornecidos
+A validação da task 2.1 também executou build com segredos sentinela fornecidos
 somente ao processo e inspeciona os assets de `apps/web/.next/static` para detectar
 esses valores/nomes. Isso complementa o teste de dependências; não usa credenciais reais.
 
@@ -130,3 +175,18 @@ aprovados em 43 arquivos. Typecheck, lint, build, OpenSpec estrito e
 Os testes da 2.1 passaram a esperar a rota somente quando enabled e a permitir
 as dependências locais/Fastify/node:crypto do novo adapter; expectativas comerciais
 e schemas públicos permanecem iguais.
+
+Verificação da implementação da task 2.3 em 2026-09-30 (Node 24.21.0, npm 11.19.0):
+105 testes adicionados; os 193 testes de webhook/projeção passam. A suíte completa
+executada após a revisão final teve 1.184 aprovados e 1 falha em 44 arquivos:
+`whatsapp-config.test.ts`, teste preexistente de logs do startup, recebeu
+`spawnSync ... node EPERM`. O mesmo erro foi reproduzido num subprocesso Node
+mínimo, fora da suíte. O teste não foi alterado ou enfraquecido.
+
+`npm run typecheck`, `npm run lint`, `openspec validate whatsapp-channel-mvp --strict`
+e `git diff --check` passaram. `npm run build` compilou contratos/API e o bundle
+web, mas falhou na etapa TypeScript do Next com
+`Could not parse output from TypeScript's --showConfig.`; executar `tsc --showConfig`
+diretamente produziu JSON válido. Nenhuma configuração de build foi flexibilizada.
+A task 2.3 permanece desmarcada até aprovação de todas as validações obrigatórias;
+tasks posteriores não foram iniciadas. Nenhum teste chamou Meta/OpenAI reais.
