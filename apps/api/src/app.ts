@@ -1,6 +1,7 @@
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import { ChatOpenAI } from '@langchain/openai';
 import { loadWhatsAppConfig } from './channels/whatsapp/config.js';
+import { registerMetaWebhookRoutes } from './channels/whatsapp/meta/webhook-route.js';
 import { createLeadResultSchema, languageSchoolChatResponseSchema, scheduleTrialClassResultSchema, transferToHumanResultSchema } from '@supportflow/contracts/language-school';
 import { registerChatRoute } from './core/chat-route.js';
 import { createChatRunner } from './core/chat.js';
@@ -74,6 +75,12 @@ export function createApplication(environment: NodeJS.ProcessEnv, options: {
     ? new ChatOpenAI({ apiKey: config.llm.apiKey, model: config.llm.model })
     : null);
   const server = createServer();
+  if (config.whatsapp.enabled) {
+    registerMetaWebhookRoutes(server, {
+      appSecret: config.whatsapp.appSecret,
+      webhookVerifyToken: config.whatsapp.webhookVerifyToken,
+    });
+  }
   const conversations = new InMemoryConversations(createConversationContext);
   const actions = createLanguageSchoolPendingActions();
   const scheduleTrialClass = createScheduleTrialClassTool({

@@ -52,3 +52,26 @@ Nenhum schema inbound, botão funcional ou mecanismo de confirmação foi adicio
 Referências do SDK Node arquivado no planejamento anterior são somente históricas.
 A versão, os limites e a correlação acima foram verificados na documentação atual
 da Meta, sem utilizar aquele SDK como autoridade ou dependência.
+
+## Handshake e assinatura — task 2.2
+
+Fonte primária consultada em 2026-09-30:
+[Meta — criar endpoint de webhook](https://developers.facebook.com/documentation/business-messaging/whatsapp/webhooks/create-webhook-endpoint/).
+Acesso direto à página pública, sem credenciais ou chamadas à Graph API.
+
+- **GET:** `hub.mode=subscribe`, `hub.verify_token` configurado pelo desenvolvedor
+  e `hub.challenge`; verificar e devolver exatamente o challenge. No projeto, a
+  configuração correspondente é `META_WEBHOOK_VERIFY_TOKEN`.
+- **POST:** `X-Hub-Signature-256: sha256=<digest>`; autenticar a carga com
+  HMAC-SHA256 e a chave secreta do app, `META_APP_SECRET`. Os bytes originais são
+  a entrada do HMAC; não usar JSON reserializado. O access token não participa.
+
+A comparação usa `node:crypto/timingSafeEqual`, com comprimentos conferidos
+antes da chamada. O [parser documentado do Fastify](https://fastify.dev/docs/latest/Reference/ContentTypeParser/)
+permite encapsular `parseAs: buffer` e aplicar limite em bytes antes do callback.
+O limite de 1 MiB é local. Graph v26.0 permanece fixada; o webhook não descobre
+versão em rede nem depende de `latest`.
+
+O HTTP 200 implementado na 2.2 é somente validação formal/criptográfica de objeto
+JSON, sem projeção ou processamento. As garantias finais de admissão/deduplicação
+da spec ainda dependem das tasks seguintes. Não expor esta etapa como canal pronto.

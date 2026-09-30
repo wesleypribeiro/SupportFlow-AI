@@ -166,7 +166,7 @@ describe('composição opcional sem transporte Meta', () => {
     { label: 'sem Meta', environment: {} },
     { label: 'desabilitado com lixo parcial', environment: { WHATSAPP_ENABLED: 'false', META_GRAPH_API_VERSION: 'latest' } },
     { label: 'habilitado completo', environment: enabledEnvironment },
-  ])('$label mantém health/chat e não registra webhook nem faz request externo', async ({ environment }) => {
+  ])('$label mantém health/chat, registro condicional do webhook e ausência de request externo', async ({ environment }) => {
     const fetch = vi.fn(() => { throw new Error('Rede proibida'); });
     vi.stubGlobal('fetch', fetch);
     const model = new ScriptedChatModel([new AIMessage('Olá!')]);
@@ -184,7 +184,8 @@ describe('composição opcional sem transporte Meta', () => {
       goal: null, name: null, contact: null, courseId: null, slotId: null, leadId: null, revision: 0,
     });
     const routes = server.printRoutes();
-    expect(routes).not.toMatch(/whatsapp|meta|webhook/i);
+    if (app.config.whatsapp.enabled) expect(routes).toContain('webhooks/whatsapp/meta');
+    else expect(routes).not.toMatch(/whatsapp|meta|webhook/i);
     expect(fetch).not.toHaveBeenCalled();
     expectNoSecrets(response.body);
   });

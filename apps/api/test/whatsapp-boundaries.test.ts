@@ -52,7 +52,13 @@ describe('isolamento do canal e dos segredos', () => {
   it('canal não importa core, contratos comerciais, módulos escolares ou SDKs', () => {
     for (const path of sources(resolve(root, 'apps/api/src/channels/whatsapp'))) {
       expect(readFileSync(path, 'utf8'), path).not.toMatch(/process\.env/);
-      for (const dependency of imports(path)) expect(dependency, path).toBe('zod');
+      for (const dependency of imports(path)) {
+        if (dependency.startsWith('.')) {
+          expect(resolve(dirname(path), dependency).startsWith(resolve(root, 'apps/api/src/channels/whatsapp') + sep), path).toBe(true);
+        } else {
+          expect(['zod', 'fastify', 'node:crypto'], path).toContain(dependency);
+        }
+      }
     }
     // A fronteira de transporte consiste somente em tipos, sem dependência externa.
     expect(imports(resolve(root, 'apps/api/src/channels/whatsapp/transport.ts'))).toEqual([]);
