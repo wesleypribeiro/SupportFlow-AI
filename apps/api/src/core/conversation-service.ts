@@ -9,7 +9,9 @@ export type ConversationServiceResult<Response> =
 
 // Adapters validam os comandos com os contratos compartilhados antes de chamar
 // o serviço. Nenhum código HTTP ou conceito do segmento entra nesta interface.
-export type ConversationService<Response> = {
+export type ConversationService<Response, PendingAction = unknown> = {
+  openConversation: () => Promise<ConversationServiceResult<{ conversationId: string }>>;
+  getCurrentPendingAction: (request: Pick<ChatConfirmationRequest, 'conversationId'>) => Promise<ConversationServiceResult<{ pendingAction: PendingAction }>>;
   sendMessage: (request: ChatRequest) => Promise<ConversationServiceResult<Response>>;
   confirmAction: (request: ChatConfirmationRequest) => Promise<ConversationServiceResult<Response>>;
 };
@@ -21,10 +23,39 @@ export function createConversationService<Context extends { revision: number }, 
   describeReceipt?: (action: PreparedAction<Definition>, receipt: Receipt) => Promise<string>;
   runTurn: ReturnType<typeof createChatRunner<Context>>;
   parseResponse: (response: unknown) => Response;
-}): ConversationService<Response> {
+}): ConversationService<Response, ReturnType<InMemoryPendingActions<Definition, Receipt>['pending']>> {
   const { conversations, actions, executeAction, describeReceipt, runTurn, parseResponse } = composition;
 
   return {
+    async openConversation() {
+      try {
+        // A factory injetada define os defaults. Esta abertura explícita persiste
+        // apenas o estado vazio; sendMessage sem ID mantém seu commit por turno.
+        const conversation = conversations.create();
+        return await conversations.runExclusive(conversation.id, () => {
+          conversations.save(conversation);
+          return { ok: true, response: { conversationId: conversation.id } };
+        });
+      } catch {
+        return { ok: false, code: 'CHAT_ERROR' };
+      }
+    },
+
+    async getCurrentPendingAction({ conversationId }) {
+      try {
+        return await conversations.runExclusive(conversationId, () => {
+          // A leitura observa somente o estado commitado anterior na mesma fila.
+          const conversation = conversations.get(conversationId);
+          if (!conversation) return { ok: false, code: 'NOT_FOUND' };
+          return { ok: true, response: {
+            pendingAction: actions.pending(conversationId, conversation.context.revision),
+          } };
+        });
+      } catch {
+        return { ok: false, code: 'CHAT_ERROR' };
+      }
+    },
+
     async sendMessage({ conversationId, message }) {
       try {
         // create apenas gera o estado inicial; o primeiro turno ainda não foi salvo.

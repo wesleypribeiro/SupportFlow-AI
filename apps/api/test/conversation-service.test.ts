@@ -76,6 +76,254 @@ describe('ConversationService — extração compatível com a API', () => {
     return success(await app.conversationService.confirmAction(confirmation(body)));
   }
 
+  describe('1.2 — abertura interna e leitura consistente', () => {
+    async function open(app: App) {
+      const result = await app.conversationService.openConversation();
+      assert(result.ok, JSON.stringify(result));
+      expect(Object.keys(result.response)).toEqual(['conversationId']);
+      return result.response.conversationId;
+    }
+    async function read(app: App, conversationId: string) {
+      const result = await app.conversationService.getCurrentPendingAction({ conversationId });
+      assert(result.ok, JSON.stringify(result));
+      expect(Object.keys(result.response)).toEqual(['pendingAction']);
+      return result.response.pendingAction;
+    }
+
+    it('abre duas conversas persistidas com IDs do backend e defaults oficiais, sem modelo ou negócios', async () => {
+      const app = application([]);
+      const create = vi.spyOn(app.conversations, 'create');
+      const lock = vi.spyOn(app.conversations, 'runExclusive');
+      const [first, second] = await Promise.all([open(app), open(app)]);
+      expect(first).not.toBe(second);
+      expect(first).toBe(create.mock.results[0]!.value.id);
+      expect(second).toBe(create.mock.results[1]!.value.id);
+      for (const id of [first, second]) {
+        expect(id.trim()).not.toBe('');
+        expect(app.conversations.get(id)).toEqual({ id, history: [], context: {
+          goal: null, name: null, contact: null, courseId: null,
+          slotId: null, leadId: null, revision: 0,
+        } });
+        expect(await read(app, id)).toBeNull();
+        expect(await app.leadRepository.findByConversationId(id)).toBeNull();
+        expect(await app.handoffRepository.findOpenByConversationId(id)).toBeNull();
+      }
+      for (const slot of slotFixtures) expect(await app.trialClassRepository.findConfirmedBySlotId(slot.slotId)).toBeNull();
+      expect(create).toHaveBeenCalledTimes(2);
+      expect(lock).toHaveBeenCalledTimes(4); // Duas aberturas e duas leituras, sem aquisição interna extra.
+      expect(app.model.calls).toHaveLength(0); expect(app.model.contextCalls).toHaveLength(0);
+    });
+
+    it('primeiro turno reutiliza a conversa aberta e atualiza normalmente contexto e histórico', async () => {
+      const app = application([dialogue(new AIMessage('Olá!'), { goal: 'viagem' })]);
+      const create = vi.spyOn(app.conversations, 'create');
+      const id = await open(app);
+      const other = await open(app);
+      const beforeOther = app.conversations.get(other);
+      const body = await send(app, 'Olá, quero estudar para viagem.', id);
+      expect(body.conversationId).toBe(id);
+      expect(create).toHaveBeenCalledTimes(2); // O turno não cria uma terceira conversa.
+      expect(app.conversations.get(id)?.context).toEqual({ ...createConversationContext(), goal: 'viagem', revision: 1 });
+      expect(app.conversations.get(id)?.history.map((message) => message.text)).toEqual(['Olá, quero estudar para viagem.', 'Olá!']);
+      expect(app.conversations.get(other)).toEqual(beforeOther);
+    });
+
+    it.each(['contexto', 'seleção', 'redação', 'envelope'])('falha de %s no primeiro turno preserva a conversa explicitamente aberta', async (failure) => {
+      const turn = failure === 'contexto'
+        ? dialogue(new AIMessage('Olá'), { name: 'Nome inventado' })
+        : failure === 'seleção'
+          ? dialogue(new Error('PRIVATE'), leadPatch)
+          : query('create_lead', ({ name, contact, courseId, goal }) => ({ name, contact, courseId, goal }),
+            leadPatch, failure === 'redação' ? new Error('PRIVATE') : new AIMessage(''));
+      const app = application([turn]);
+      const id = await open(app);
+      const before = app.conversations.get(id);
+      const save = vi.spyOn(app.conversations, 'save');
+      const stage = vi.spyOn(InMemoryPendingActions.prototype, 'stage');
+      expect(await app.conversationService.sendMessage({ conversationId: id, message: registrationMessage }))
+        .toEqual({ ok: false, code: 'CHAT_ERROR' });
+      expect(app.conversations.get(id)).toEqual(before);
+      expect(save).not.toHaveBeenCalled();
+      expect(await read(app, id)).toBeNull();
+      expect(await app.leadRepository.findByConversationId(id)).toBeNull();
+      if (failure === 'envelope') {
+        expect(stage).toHaveBeenCalledOnce();
+        const discarded = stage.mock.results[0]!.value as { preview: { actionId: string } };
+        expect(await app.conversationService.confirmAction({ conversationId: id, actionId: discarded.preview.actionId }))
+          .toEqual({ ok: false, code: 'NOT_FOUND' });
+      } else expect(stage).not.toHaveBeenCalled();
+    });
+
+    it('leitura de conversa inexistente retorna NOT_FOUND sem criar sessão ou consultar modelo', async () => {
+      const app = application([]);
+      const create = vi.spyOn(app.conversations, 'create');
+      const save = vi.spyOn(app.conversations, 'save');
+      expect(await app.conversationService.getCurrentPendingAction({ conversationId: 'missing' }))
+        .toEqual({ ok: false, code: 'NOT_FOUND' });
+      expect(create).not.toHaveBeenCalled(); expect(save).not.toHaveBeenCalled();
+      expect(app.model.calls).toHaveLength(0); expect(app.model.contextCalls).toHaveLength(0);
+    });
+
+    it('leitura publica somente cópia defensiva da prévia, sem efeitos no contexto/lifecycle/negócios', async () => {
+      const app = application([leadTurn(leadPatch)]);
+      const id = await open(app);
+      const proposed = await send(app, registrationMessage, id);
+      const before = app.conversations.get(id);
+      const calls = app.model.calls.length;
+      const contextCalls = app.model.contextCalls.length;
+      const create = vi.spyOn(app.conversations, 'create');
+      const save = vi.spyOn(app.conversations, 'save');
+      const stage = vi.spyOn(InMemoryPendingActions.prototype, 'stage');
+      const execute = vi.spyOn(InMemoryPendingActions.prototype, 'confirm');
+      const invalidate = vi.spyOn(InMemoryPendingActions.prototype, 'invalidate');
+      const leadWrite = vi.spyOn(app.leadRepository, 'createForConversation');
+      const reserve = vi.spyOn(app.trialClassRepository, 'reserveSlot');
+      const handoff = vi.spyOn(app.handoffRepository, 'requestForConversation');
+      const current = await read(app, id);
+      expect(current).toEqual(proposed.pendingAction);
+      assert(current && 'contact' in current.preview);
+      expect(Object.keys(current).sort()).toEqual(['actionId', 'kind', 'preview']);
+      current.preview.contact.value = 'alterado@example.com'; current.actionId = 'alterado';
+      expect(await read(app, id)).toEqual(proposed.pendingAction);
+      expect(app.conversations.get(id)).toEqual(before);
+      expect(app.model.calls).toHaveLength(calls); expect(app.model.contextCalls).toHaveLength(contextCalls);
+      for (const operation of [create, save, stage, execute, invalidate, leadWrite, reserve, handoff]) expect(operation).not.toHaveBeenCalled();
+    });
+
+    it('leitura não publica ação concluída; recibo original continua acessível após nova revisão', async () => {
+      const app = application([leadTurn(leadPatch), dialogue(new AIMessage('Corrigido.'), { goal: 'entrevistas' })]);
+      const id = await open(app);
+      const proposed = await send(app, registrationMessage, id);
+      expect(await read(app, id)).toEqual(proposed.pendingAction);
+      const create = vi.spyOn(app.leadRepository, 'createForConversation');
+      const receipt = await confirm(app, proposed);
+      expect(await read(app, id)).toBeNull();
+      await send(app, 'Agora quero entrevistas.', id);
+      expect(await read(app, id)).toBeNull();
+      expect(await confirm(app, proposed)).toEqual(receipt);
+      expect(create).toHaveBeenCalledOnce();
+    });
+
+    it.each([false, true])('leitura aguarda proposta local e observa commit ou rollback (falha: %s)', async (fails) => {
+      const entered = gate(); const release = gate();
+      const app = application([leadTurn(leadPatch), query('create_lead',
+        ({ name, contact, courseId, goal }) => ({ name, contact, courseId, goal }),
+        { contact: { type: 'email', value: 'ana.novo@example.com' } }, async () => {
+          entered.release(); await release.promise;
+          if (fails) throw new Error('PRIVATE');
+          return new AIMessage('Revise a nova prévia.');
+        })]);
+      const id = await open(app);
+      const previous = await send(app, registrationMessage, id);
+      const before = app.conversations.get(id);
+      const turn = app.conversationService.sendMessage({ conversationId: id, message: 'Meu email é ana.novo@example.com.' });
+      await entered.promise; // A tool já propôs, a redação ainda não terminou.
+      let observed = false;
+      const reading = read(app, id).then((value) => { observed = true; return value; });
+      try {
+        const other = await open(app); // Prova de progresso independente, sem sleep.
+        expect(await read(app, other)).toBeNull();
+        expect(observed).toBe(false);
+        expect(app.conversations.get(id)).toEqual(before);
+      } finally { release.release(); }
+      const result = await turn;
+      const preview = await reading;
+      if (fails) {
+        expect(result).toEqual({ ok: false, code: 'CHAT_ERROR' });
+        expect(preview).toEqual(previous.pendingAction);
+        expect(app.conversations.get(id)).toEqual(before);
+      } else {
+        expect(preview).toEqual(success(result).pendingAction);
+        expect(preview?.actionId).not.toBe(previous.pendingAction?.actionId);
+        expect(preview?.preview).toMatchObject({ contact: { value: 'ana.novo@example.com' } });
+      }
+      expect(await app.leadRepository.findByConversationId(id)).toBeNull();
+    });
+
+    it('correção de contato → leitura → confirmação observa invalidação e não grava dados antigos', async () => {
+      const entered = gate(); const release = gate();
+      const app = application([leadTurn(leadPatch), dialogue(async () => {
+        entered.release(); await release.promise; return new AIMessage('Contato corrigido.');
+      }, { contact: { type: 'email', value: 'ana.novo@example.com' } })]);
+      const id = await open(app);
+      const proposed = await send(app, registrationMessage, id);
+      const lock = vi.spyOn(app.conversations, 'runExclusive');
+      const correction = app.conversationService.sendMessage({ conversationId: id, message: 'Meu novo email é ana.novo@example.com.' });
+      await entered.promise;
+      const reading = read(app, id);
+      const confirming = app.conversationService.confirmAction(confirmation(proposed));
+      release.release();
+      const [changed, preview, result] = await Promise.all([correction, reading, confirming]);
+      expect(success(changed).pendingAction).toBeNull();
+      expect(preview).toBeNull();
+      expect(result).toEqual({ ok: false, code: 'ACTION_STALE' });
+      expect(app.conversations.get(id)?.context).toMatchObject({ contact: { value: 'ana.novo@example.com' }, revision: 2 });
+      expect(await app.leadRepository.findByConversationId(id)).toBeNull();
+      expect(lock).toHaveBeenCalledTimes(3);
+      expect(lock.mock.calls.every(([conversationId]) => conversationId === id)).toBe(true);
+    });
+
+    it('confirmação → leitura → correção preserva recibo antigo e a gravação autorizada', async () => {
+      const entered = gate(); const release = gate();
+      const app = application([leadTurn(leadPatch), dialogue(new AIMessage('Contato corrigido.'), {
+        contact: { type: 'email', value: 'ana.novo@example.com' },
+      })]);
+      const id = await open(app);
+      const proposed = await send(app, registrationMessage, id);
+      const create = app.leadRepository.createForConversation.bind(app.leadRepository);
+      // Apenas pausa a execução: a gravação continua usando o repository real.
+      const write = vi.spyOn(app.leadRepository, 'createForConversation').mockImplementation(async (...args) => {
+        entered.release(); await release.promise; return create(...args);
+      });
+      const lock = vi.spyOn(app.conversations, 'runExclusive');
+      const confirming = confirm(app, proposed);
+      await entered.promise;
+      const reading = read(app, id);
+      const correction = app.conversationService.sendMessage({ conversationId: id, message: 'Meu novo email é ana.novo@example.com.' });
+      release.release();
+      const [receipt, preview, changed] = await Promise.all([confirming, reading, correction]);
+      expect(receipt.results[0]).toMatchObject({ tool: 'create_lead', result: { ok: true, data: { outcome: 'created', lead: { contact: email } } } });
+      expect(preview).toBeNull(); expect(changed.ok).toBe(true);
+      expect(app.conversations.get(id)?.context.contact?.value).toBe('ana.novo@example.com');
+      expect((await app.leadRepository.findByConversationId(id))?.contact).toEqual(email);
+      expect(await confirm(app, proposed)).toEqual(receipt);
+      expect(write).toHaveBeenCalledOnce(); expect(lock).toHaveBeenCalledTimes(4);
+    });
+
+    it('leitura entre dois turnos recebe a prévia intermediária, nunca um snapshot anterior à fila', async () => {
+      const firstEntered = gate(); const firstRelease = gate();
+      const secondEntered = gate(); const secondRelease = gate();
+      const args = ({ name, contact, courseId, goal }: ReturnType<typeof createConversationContext>) => ({ name, contact, courseId, goal });
+      const app = application([
+        query('create_lead', args, leadPatch, async () => {
+          firstEntered.release(); await firstRelease.promise; return new AIMessage('Prévia A.');
+        }),
+        query('create_lead', args, { contact: { type: 'email', value: 'ana.novo@example.com' } }, async () => {
+          secondEntered.release(); await secondRelease.promise; return new AIMessage('Prévia B.');
+        }),
+      ]);
+      const id = await open(app);
+      const first = app.conversationService.sendMessage({ conversationId: id, message: registrationMessage });
+      await firstEntered.promise;
+      const reading = read(app, id);
+      const second = app.conversationService.sendMessage({ conversationId: id, message: 'Meu novo email é ana.novo@example.com.' });
+      firstRelease.release();
+      await secondEntered.promise;
+      try {
+        const intermediate = await reading;
+        expect(intermediate).toEqual(success(await first).pendingAction);
+        expect(intermediate?.preview).toMatchObject({ contact: email });
+        expect(app.conversations.get(id)?.context.contact).toEqual(email);
+        expect(app.model.calls.at(-1)?.messages.some((message) => message.text === 'Prévia A.')).toBe(true);
+      } finally { secondRelease.release(); }
+      const latest = success(await second);
+      expect(await read(app, id)).toEqual(latest.pendingAction);
+      expect(latest.pendingAction?.preview).toMatchObject({ contact: { value: 'ana.novo@example.com' } });
+      expect(app.conversations.get(id)?.context.revision).toBe(2);
+      expect(await app.leadRepository.findByConversationId(id)).toBeNull();
+    });
+  });
+
   it('gera ID no backend e inicia somente após primeiro turno completo, sem HTTP', async () => {
     const app = application([dialogue(new AIMessage('Olá!'))]);
     const create = vi.spyOn(app.conversations, 'create');
@@ -354,6 +602,47 @@ describe('ConversationService — validação e fronteira de commit', () => {
     });
     return { conversations, actions, proposal, responseSchema };
   }
+
+  it('abertura usa exclusivamente a factory injetada, sem conhecer defaults escolares', async () => {
+    const factory = vi.fn(() => ({ revision: 0, preferences: { categories: ['demo'] } }));
+    const conversations = new InMemoryConversations(factory);
+    const { actions, responseSchema } = composition();
+    const runTurn = vi.fn(async () => { throw new Error('Abertura não executa turno.'); });
+    const parseResponse = vi.fn((value: unknown) => responseSchema.parse(value));
+    const service = createConversationService({ conversations, actions, runTurn, parseResponse });
+    const opened = await service.openConversation();
+    assert(opened.ok);
+    expect(factory).toHaveBeenCalledOnce();
+    expect(conversations.get(opened.response.conversationId)).toEqual({
+      id: opened.response.conversationId, history: [],
+      context: { revision: 0, preferences: { categories: ['demo'] } },
+    });
+    // A saída da factory também não fica armazenada por referência.
+    factory.mock.results[0]!.value.preferences.categories.push('alterada');
+    expect(conversations.get(opened.response.conversationId)?.context.preferences.categories).toEqual(['demo']);
+    expect(await service.getCurrentPendingAction(opened.response)).toEqual({ ok: true, response: { pendingAction: null } });
+    expect(runTurn).not.toHaveBeenCalled(); expect(parseResponse).not.toHaveBeenCalled();
+  });
+
+  it('leitura filtra revisão antiga sem invalidar ou mutar o lifecycle', async () => {
+    const { conversations, actions, proposal, responseSchema } = composition();
+    const runTurn = vi.fn(async () => { throw new Error('Leitura não executa turno.'); });
+    const service = createConversationService({ conversations, actions, runTurn, parseResponse: (value) => responseSchema.parse(value) });
+    const opened = await service.openConversation();
+    assert(opened.ok);
+    const { conversationId } = opened.response;
+    const action = actions.prepare(conversationId, 0, proposal);
+    const conversation = conversations.get(conversationId)!;
+    conversations.save({ ...conversation, context: { revision: 1 } });
+    const invalidate = vi.spyOn(actions, 'invalidate');
+    const invalidateCurrent = vi.spyOn(actions, 'invalidateCurrent');
+    const pending = vi.spyOn(actions, 'pending');
+    expect(await service.getCurrentPendingAction({ conversationId })).toEqual({ ok: true, response: { pendingAction: null } });
+    expect(pending).toHaveBeenCalledExactlyOnceWith(conversationId, 1);
+    expect(invalidate).not.toHaveBeenCalled(); expect(invalidateCurrent).not.toHaveBeenCalled();
+    expect(runTurn).not.toHaveBeenCalled();
+    expect(await service.confirmAction({ conversationId, actionId: action.actionId })).toEqual({ ok: false, code: 'ACTION_STALE' });
+  });
 
   it('envelope é validado antes de ambos os commits; stage ainda não é ação confirmável', async () => {
     const { conversations, actions, proposal, responseSchema } = composition();
