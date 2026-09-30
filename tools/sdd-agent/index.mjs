@@ -279,13 +279,18 @@ async function runCodex(root, prompt) {
   let completed = false;
 
   for await (const event of events) {
-    if (event.type === 'item.started') {
-      if (event.item.type === 'command_execution') {
-        console.log(`→ comando: ${event.item.command}`);
-      } else if (event.item.type === 'web_search') {
-        console.log(`→ pesquisa: ${event.item.query}`);
-      } else if (event.item.type === 'mcp_tool_call') {
-        console.log(`→ ferramenta: ${event.item.server}/${event.item.tool}`);
+    if (event.type === 'item.started' || event.type === 'item.updated') {
+      const item = event.item;
+
+      if (item.type === 'command_execution' && event.type === 'item.started') {
+        console.log(`→ comando: ${item.command}`);
+      } else if (item.type === 'web_search' && event.type === 'item.started') {
+        console.log(`→ pesquisa: ${item.query}`);
+      } else if (item.type === 'mcp_tool_call' && event.type === 'item.started') {
+        console.log(`→ ferramenta: ${item.server}/${item.tool}`);
+      } else if (item.type === 'todo_list') {
+        const completedItems = item.items.filter((todo) => todo.completed).length;
+        console.log(`→ plano: ${completedItems}/${item.items.length} itens concluídos`);
       }
       continue;
     }
@@ -305,9 +310,12 @@ async function runCodex(root, prompt) {
         console.log(`→ plano: ${completedItems}/${item.items.length} itens concluídos`);
       } else if (item.type === 'agent_message') {
         finalResponse = item.text;
-      } else if (item.type === 'error') {
-        console.error(`✗ Codex: ${item.message}`);
       }
+      continue;
+    }
+
+    if (event.type === 'error') {
+      console.error(`✗ Codex: ${event.message}`);
       continue;
     }
 
