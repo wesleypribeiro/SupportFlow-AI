@@ -1,5 +1,6 @@
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import { ChatOpenAI } from '@langchain/openai';
+import { loadWhatsAppConfig } from './channels/whatsapp/config.js';
 import { createLeadResultSchema, languageSchoolChatResponseSchema, scheduleTrialClassResultSchema, transferToHumanResultSchema } from '@supportflow/contracts/language-school';
 import { registerChatRoute } from './core/chat-route.js';
 import { createChatRunner } from './core/chat.js';
@@ -51,6 +52,7 @@ export function createApplication(environment: NodeJS.ProcessEnv, options: {
   const config = {
     ...loadCoreConfig(environment),
     school: loadLanguageSchoolConfig(environment),
+    whatsapp: loadWhatsAppConfig(environment),
   };
 
   if (config.school.schoolId !== schoolFixture.id) {
