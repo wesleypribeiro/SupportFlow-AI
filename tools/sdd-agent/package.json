@@ -1,0 +1,8 @@
+{
+  "name": "supportflow-sdd-agent",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@openai/codex-sdk": "0.159.2"
+  }
+}
