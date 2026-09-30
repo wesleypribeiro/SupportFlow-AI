@@ -1,14 +1,18 @@
 #!/usr/bin/env node
 
-import { access, readdir, readFile } from 'node:fs/promises';
+import { access, readdir, readFile, writeFile } from 'node:fs/promises';
 import { constants } from 'node:fs';
-import { resolve, join, basename } from 'node:path';
+import { resolve, join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
+import { execFile as execFileCallback, spawn } from 'node:child_process';
+import { promisify } from 'node:util';
 import { Codex } from '@openai/codex-sdk';
 
+const execFile = promisify(execFileCallback);
 const CHECKBOX = /^\s*-\s*\[([ xX])\]\s+(.+)$/;
 const TASK_ID = /^(\d+(?:\.\d+)*)\s+(.+)$/;
+const PROTECTED_BRANCHES = new Set(['main', 'master']);
 
 function parseArgs(argv) {
   const result = { change: null, yes: false, dryRun: false };
@@ -58,6 +62,10 @@ Opções:
   --dry-run        Mostra a próxima task e o prompt, sem chamar o Codex.
   --yes, -y        Não pede confirmação antes de chamar o Codex.
   --help, -h       Mostra esta ajuda.
+
+Segurança:
+  Execução real é bloqueada em main/master e em HEAD destacado.
+  Use uma branch de feature/chore antes de iniciar o Codex.
 `.trim());
 }
 
@@ -87,6 +95,33 @@ async function findRepoRoot(start = process.cwd()) {
   }
 
   throw new Error('Não foi possível localizar a raiz do repositório (package.json + AGENTS.md).');
+}
+
+async function currentBranch(root) {
+  const { stdout } = await execFile('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: root });
+  return stdout.trim();
+}
+
+async function ensureSafeBranch(root) {
+  const branch = await currentBranch(root);
+
+  if (!branch || branch === 'HEAD') {
+    throw new Error(
+      'Execução bloqueada em HEAD destacado. Crie/troque para uma branch antes de executar o SDD Agent.',
+    );
+  }
+
+  if (PROTECTED_BRANCHES.has(branch)) {
+    throw new Error(
+      [
+        `Execução bloqueada na branch protegida "${branch}".`,
+        'Crie uma branch para a task antes de continuar, por exemplo:',
+        '  git switch -c feat/whatsapp-task-X.Y',
+      ].join('\n'),
+    );
+  }
+
+  return branch;
 }
 
 async function activeChanges(root) {
@@ -194,22 +229,21 @@ function buildPrompt(change, task) {
     'Implemente exatamente os critérios dessa task e os testes correspondentes.',
     'Não avance para a próxima task.',
     '',
-    'Ao terminar:',
-    '- execute todas as validações obrigatórias do AGENTS.md;',
-    '- marque somente esta task se todos os critérios estiverem satisfeitos;',
-    '- apresente o relatório de conclusão em português;',
-    '- não faça commit, push, merge ou archive.',
+    'Durante a implementação, você pode executar testes focados e inspeções necessárias.',
+    'NÃO marque a checkbox da task como concluída.',
+    'NÃO faça commit, push, merge, rebase ou archive.',
     '',
-    'Depois de concluir a task solicitada, pare.',
+    'As validações globais obrigatórias e a marcação final da task serão executadas pelo processo pai do SDD Agent, fora do sandbox do Codex.',
+    'Ao concluir a implementação, apresente o relatório em português e pare.',
   ].join('\n');
 }
 
-async function confirmRun(change, task) {
+async function confirmRun(change, task, branch) {
   const rl = createInterface({ input, output });
 
   try {
     const answer = await rl.question(
-      `Executar a task ${task.id ?? task.raw} da change "${change}" com o Codex? [y/N] `,
+      `Executar a task ${task.id ?? task.raw} da change "${change}" na branch "${branch}"? [y/N] `,
     );
     return ['y', 'yes', 's', 'sim'].includes(answer.trim().toLowerCase());
   } finally {
@@ -217,7 +251,7 @@ async function confirmRun(change, task) {
   }
 }
 
-function printTask(change, task) {
+function printTask(change, task, branch = null) {
   console.log('');
   console.log('════════════════════════════════════════');
   console.log(' SupportFlow SDD Agent');
@@ -225,25 +259,180 @@ function printTask(change, task) {
   console.log(`Change:       ${change}`);
   console.log(`Próxima task: ${task.id ?? '(sem ID)'}`);
   console.log(`Descrição:    ${task.description}`);
+  if (branch) console.log(`Branch:       ${branch}`);
   console.log('════════════════════════════════════════');
   console.log('');
 }
 
+function formatFileChanges(changes) {
+  return changes.map((change) => `${change.kind}:${change.path}`).join(', ');
+}
+
 async function runCodex(root, prompt) {
   const codex = new Codex();
-  const thread = codex.startThread({
-    workingDirectory: root,
-  });
+  const thread = codex.startThread({ workingDirectory: root });
 
   console.log('Iniciando Codex...\n');
 
-  const turn = await thread.run(prompt);
+  const { events } = await thread.runStreamed(prompt);
+  let finalResponse = '';
+  let completed = false;
+
+  for await (const event of events) {
+    if (event.type === 'item.started' || event.type === 'item.updated') {
+      const item = event.item;
+
+      if (item.type === 'command_execution' && event.type === 'item.started') {
+        console.log(`→ comando: ${item.command}`);
+      } else if (item.type === 'web_search' && event.type === 'item.started') {
+        console.log(`→ pesquisa: ${item.query}`);
+      } else if (item.type === 'mcp_tool_call' && event.type === 'item.started') {
+        console.log(`→ ferramenta: ${item.server}/${item.tool}`);
+      } else if (item.type === 'todo_list') {
+        const completedItems = item.items.filter((todo) => todo.completed).length;
+        console.log(`→ plano: ${completedItems}/${item.items.length} itens concluídos`);
+      }
+      continue;
+    }
+
+    if (event.type === 'item.completed') {
+      const item = event.item;
+
+      if (item.type === 'reasoning' && item.text.trim()) {
+        console.log(`→ ${item.text.trim()}`);
+      } else if (item.type === 'file_change') {
+        console.log(`→ arquivos: ${formatFileChanges(item.changes)}`);
+      } else if (item.type === 'command_execution') {
+        const ok = item.status === 'completed' && item.exit_code === 0;
+        console.log(`${ok ? '✓' : '✗'} comando concluído (exit ${item.exit_code ?? '?'})`);
+      } else if (item.type === 'todo_list') {
+        const completedItems = item.items.filter((todo) => todo.completed).length;
+        console.log(`→ plano: ${completedItems}/${item.items.length} itens concluídos`);
+      } else if (item.type === 'agent_message') {
+        finalResponse = item.text;
+      }
+      continue;
+    }
+
+    if (event.type === 'error') {
+      console.error(`✗ Codex: ${event.message}`);
+      continue;
+    }
+
+    if (event.type === 'turn.failed') {
+      throw new Error(`Codex falhou: ${event.error.message}`);
+    }
+
+    if (event.type === 'turn.completed') {
+      completed = true;
+    }
+  }
+
+  if (!completed) {
+    throw new Error('A execução do Codex terminou sem evento turn.completed.');
+  }
 
   console.log('\n════════════════════════════════════════');
   console.log(' Resposta final do Codex');
   console.log('════════════════════════════════════════\n');
-  console.log(turn.finalResponse?.trim() || '(Codex não retornou resposta final em texto.)');
+  console.log(finalResponse.trim() || '(Codex não retornou resposta final em texto.)');
   console.log('');
+
+  return finalResponse;
+}
+
+function executable(name) {
+  if (process.platform !== 'win32') return name;
+  if (name === 'npm') return 'npm.cmd';
+  if (name === 'openspec') return 'openspec.cmd';
+  return name;
+}
+
+async function runCommand(root, label, command, args) {
+  console.log('');
+  console.log(`▶ ${label}`);
+  console.log(`  $ ${command} ${args.join(' ')}`);
+
+  return new Promise((resolveResult) => {
+    const child = spawn(executable(command), args, {
+      cwd: root,
+      env: process.env,
+      stdio: 'inherit',
+      shell: false,
+    });
+
+    child.on('error', (error) => {
+      console.error(`✗ ${label}: não foi possível iniciar (${error.message})`);
+      resolveResult(false);
+    });
+
+    child.on('close', (code, signal) => {
+      if (code === 0) {
+        console.log(`✓ ${label}`);
+        resolveResult(true);
+      } else {
+        console.error(`✗ ${label} (exit ${code ?? '?' }${signal ? `, signal ${signal}` : ''})`);
+        resolveResult(false);
+      }
+    });
+  });
+}
+
+async function runValidations(root, change) {
+  console.log('\n════════════════════════════════════════');
+  console.log(' Validação local pós-Codex');
+  console.log('════════════════════════════════════════');
+
+  const checks = [
+    ['Testes', 'npm', ['test']],
+    ['Typecheck', 'npm', ['run', 'typecheck']],
+    ['Lint', 'npm', ['run', 'lint']],
+    ['Build', 'npm', ['run', 'build']],
+    ['OpenSpec strict', 'openspec', ['validate', change, '--strict']],
+    ['git diff --check', 'git', ['diff', '--check']],
+  ];
+
+  const results = [];
+
+  for (const [label, command, args] of checks) {
+    const passed = await runCommand(root, label, command, args);
+    results.push({ label, passed });
+  }
+
+  console.log('\nResumo das validações:');
+  for (const result of results) {
+    console.log(`  ${result.passed ? '✓' : '✗'} ${result.label}`);
+  }
+
+  return results.every((result) => result.passed);
+}
+
+async function setTaskStatus(tasksPath, task, done) {
+  const source = await readFile(tasksPath, 'utf8');
+  const lines = source.split(/\r?\n/);
+  let updated = false;
+
+  const next = lines.map((line) => {
+    if (updated) return line;
+
+    const checkbox = CHECKBOX.exec(line);
+    if (!checkbox) return line;
+
+    const body = checkbox[2].trim();
+    const parsed = TASK_ID.exec(body);
+    const sameTask = task.id ? parsed?.[1] === task.id : body === task.raw;
+
+    if (!sameTask) return line;
+
+    updated = true;
+    return line.replace(/\[([ xX])\]/, done ? '[x]' : '[ ]');
+  });
+
+  if (!updated) {
+    throw new Error(`Não foi possível localizar a task ${task.id ?? task.raw} em tasks.md para atualizar o status.`);
+  }
+
+  await writeFile(tasksPath, next.join('\n'), 'utf8');
 }
 
 async function main() {
@@ -259,7 +448,8 @@ async function main() {
     return;
   }
 
-  printTask(change, task);
+  const branch = args.dryRun ? await currentBranch(root) : await ensureSafeBranch(root);
+  printTask(change, task, branch);
 
   const prompt = buildPrompt(change, task);
 
@@ -270,7 +460,7 @@ async function main() {
   }
 
   if (!args.yes) {
-    const confirmed = await confirmRun(change, task);
+    const confirmed = await confirmRun(change, task, branch);
     if (!confirmed) {
       console.log('Execução cancelada. Nenhum agente foi iniciado.');
       return;
@@ -279,8 +469,25 @@ async function main() {
 
   await runCodex(root, prompt);
 
+  // A task precisa permanecer pendente até a validação local externa ao Codex.
+  await setTaskStatus(tasksPath, task, false);
+
+  const valid = await runValidations(root, change);
+
+  if (!valid) {
+    console.error('');
+    console.error(`Task ${task.id ?? task.raw} NÃO foi marcada como concluída porque há validações com falha.`);
+    console.error('Corrija os problemas e execute novamente as validações antes de avançar.');
+    process.exitCode = 1;
+    return;
+  }
+
+  await setTaskStatus(tasksPath, task, true);
+
+  console.log('');
+  console.log(`✓ Task ${task.id ?? task.raw} marcada como concluída em tasks.md.`);
   console.log('Human gate: execução encerrada após uma única task.');
-  console.log('Revise as alterações antes de decidir o próximo passo.');
+  console.log('Revise as alterações e faça commit/push somente quando decidir prosseguir.');
 }
 
 main().catch((error) => {
