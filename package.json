@@ -20,7 +20,9 @@
     "test": "vitest run",
     "typecheck": "npm run typecheck --workspaces",
     "lint": "eslint apps/api packages/contracts vitest.config.ts && npm run lint --workspace @supportflow/web",
-    "build": "npm run build --workspaces"
+    "build": "npm run build --workspaces",
+    "sdd:setup": "npm install --prefix tools/sdd-agent",
+    "sdd": "node tools/sdd-agent/index.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",
