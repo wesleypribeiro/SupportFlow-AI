@@ -79,6 +79,8 @@ export function createApplication(environment: NodeJS.ProcessEnv, options: {
     registerMetaWebhookRoutes(server, {
       appSecret: config.whatsapp.appSecret,
       webhookVerifyToken: config.whatsapp.webhookVerifyToken,
+      wabaId: config.whatsapp.wabaId,
+      phoneNumberId: config.whatsapp.phoneNumberId,
     });
   }
   const conversations = new InMemoryConversations(createConversationContext);

@@ -72,6 +72,27 @@ permite encapsular `parseAs: buffer` e aplicar limite em bytes antes do callback
 O limite de 1 MiB é local. Graph v26.0 permanece fixada; o webhook não descobre
 versão em rede nem depende de `latest`.
 
-O HTTP 200 implementado na 2.2 é somente validação formal/criptográfica de objeto
-JSON, sem projeção ou processamento. As garantias finais de admissão/deduplicação
-da spec ainda dependem das tasks seguintes. Não expor esta etapa como canal pronto.
+O HTTP 200 implementado na 2.2 era somente validação formal/criptográfica de objeto
+JSON. A task 2.3 adiciona origem e projeção, ainda sem processamento. As garantias
+finais de admissão/deduplicação da spec dependem das tasks seguintes.
+
+## Subset de recepção — task 2.3
+
+Consulta em 2026-09-30 aos exemplos mantidos pela Meta no workspace oficial Postman:
+
+- [Received Text Message](https://www.postman.com/meta/whatsapp-business-platform/request/cy6hnq7/received-text-message):
+  envelope com WABA, número empresarial, `messages[].from`, ID, timestamp textual
+  e `text.body`; contatos/perfil ficam fora da projeção.
+- [Message Status Update Notifications](https://www.postman.com/meta/whatsapp-business-platform/request/rgtfq23/message-status-update-notifications):
+  array `statuses` separado de mensagens, com ID, status, timestamp textual e
+  destinatário; nenhuma ordenação de entrega é pressuposta.
+- [Statuses Object](https://www.postman.com/meta/whatsapp-business-platform/folder/fuaee8l/statuses-object):
+  tipos dos campos e erros externos de falha. Este MVP consome somente
+  `sent`, `delivered`, `read` e `failed`; outros estados são ignorados.
+
+Para botão, a correlação `context.id`/`button_reply.id` segue a evidência da
+v26.0 registrada acima na 2.1. Nesta consulta, páginas diretas de
+developers.facebook.com retornaram 429; o acesso HTTP pelo shell não resolveu
+DNS. Os exemplos Postman confirmam o subset de texto/status, mas não são
+homologação específica da conta/v26.0. A versão fixada permanece v26.0 e a task
+manual 7.4 continua necessária; nenhuma Graph API real foi chamada.

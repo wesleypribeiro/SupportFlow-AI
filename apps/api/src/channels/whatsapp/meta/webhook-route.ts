@@ -1,10 +1,11 @@
 import type { FastifyInstance } from 'fastify';
 import type { WhatsAppConfig } from '../config.js';
 import { verifyWebhookHandshake, verifyWebhookSignature } from './webhook-security.js';
+import { projectMetaWebhook } from './webhook-projection.js';
 
 // Limite local do produto, em bytes; não representa um limite oficial da Meta.
 const WEBHOOK_BODY_LIMIT = 1_048_576;
-type WebhookCredentials = Pick<Extract<WhatsAppConfig, { enabled: true }>, 'appSecret' | 'webhookVerifyToken'>;
+type WebhookCredentials = Pick<Extract<WhatsAppConfig, { enabled: true }>, 'appSecret' | 'webhookVerifyToken' | 'wabaId' | 'phoneNumberId'>;
 
 export function registerMetaWebhookRoutes(server: FastifyInstance, credentials: WebhookCredentials) {
   server.register(async (webhook) => {
@@ -35,15 +36,20 @@ export function registerMetaWebhookRoutes(server: FastifyInstance, credentials: 
         return reply.code(403).send();
       }
 
+      let json: unknown;
       try {
         // Decodificação/parsing somente após autenticar os bytes originais.
-        const json: unknown = JSON.parse(new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(body));
-        if (json === null || typeof json !== 'object' || Array.isArray(json)) return reply.code(400).send();
+        json = JSON.parse(new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(body));
       } catch {
         return reply.code(400).send();
       }
 
-      // Task 2.2: aceite criptográfico/formal, sem projeção, admissão ou negócios.
+      const projection = projectMetaWebhook(json, credentials);
+      if (projection.status !== 200) return reply.code(projection.status).send();
+      if (Object.values(projection.observations).some((count) => count > 0)) {
+        request.log.info({ code: 'WHATSAPP_WEBHOOK_ITEMS_IGNORED', counts: projection.observations });
+      }
+      // Task 2.3: eventos validados, ainda sem admissão/inbox ou processamento.
       return reply.code(200).send();
     });
   });
