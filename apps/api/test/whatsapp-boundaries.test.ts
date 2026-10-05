@@ -49,6 +49,22 @@ describe('isolamento do canal e dos segredos', () => {
     }
   });
 
+  it('apresentador escolar depende somente dos contratos e da formatação, sem consultar ou gravar negócios', () => {
+    const presenter = resolve(root, 'apps/api/src/modules/language-school/infrastructure/whatsapp-presentation.ts');
+    for (const dependency of imports(presenter)) {
+      expect([
+        '@supportflow/contracts/language-school',
+        '../../../channels/whatsapp/presentation.js',
+        '../../../channels/whatsapp/transport.js',
+      ], dependency).toContain(dependency);
+    }
+    const formatter = resolve(root, 'apps/api/src/channels/whatsapp/presentation.ts');
+    expect(imports(formatter)).toEqual([]);
+    for (const path of [presenter, formatter]) {
+      expect(readFileSync(path, 'utf8'), path).not.toMatch(/\b(?:fetch|process|require)\b|\bimport\s*\(/u);
+    }
+  });
+
   it('canal só acessa tipos do serviço compartilhado, sem importar implementações do core, contratos comerciais, módulos ou SDKs', () => {
     for (const path of sources(resolve(root, 'apps/api/src/channels/whatsapp'))) {
       expect(readFileSync(path, 'utf8'), path).not.toMatch(/process\.env/);

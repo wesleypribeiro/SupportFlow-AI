@@ -91,6 +91,29 @@ O lifecycle salva primeiro o recibo determinístico. [confirmation-reply.ts](inf
 
 Isso não recupera falhas técnicas anteriores à escrita. O armazenamento permanece em memória, sem transação distribuída ou sobrevivência a reinício.
 
+## Apresentação WhatsApp — task 4.1
+
+[whatsapp-presentation.ts](infrastructure/whatsapp-presentation.ts) expõe
+`presentLanguageSchoolWhatsApp(envelope)`: valida o contrato escolar existente e
+formata os sete results e as duas prévias, sem receber repositories, consultar
+regras comerciais, escrever estado ou chamar modelo/transporte. Havendo results
+ou prévia, a apresentação é determinística; somente diálogo sem ambos usa `reply`.
+O envelope e o histórico do motor permanecem intactos.
+
+O retorno contém mensagens textuais e, quando couber, `confirmation` com corpo
+completo, título, `actionId` e `kind` da prévia. Esse conteúdo não é um botão
+enviável nem uma autorização: referência opaca, verificação de commit/vínculo e
+publicação pertencem às tasks posteriores. Os títulos são “Confirmar cadastro”
+e “Confirmar aula”; o corpo distingue a aula experimental demonstrativa.
+
+Texto acima de 4.096 unidades UTF-16 é dividido em partes numeradas, com a
+numeração incluída no limite, preservando conteúdo e preferindo linhas/palavras
+completas. Grafemas permanecem juntos; um grafema isolado maior que uma mensagem
+é dividido por pontos de código, sem perda. A contagem UTF-16 é conservadora.
+Prévia acima de 1.024 unidades retorna integralmente como texto, com orientação
+para corrigir/reduzir dados e `confirmation: null`, sem confirmação incompleta.
+Datas usam o fuso oficial; preços nulos e zero continuam distintos.
+
 ## Handoff: solicitação local
 
 [handoff-intent.ts](domain/handoff-intent.ts) reconhece conservadoramente pedidos explícitos e aceita resposta curta somente à última oferta válida já apresentada/salva. A oferta canônica é “Posso registrar uma solicitação local de atendimento humano nesta demonstração?”. Negativas, hipóteses, citações e “sim” sem essa oferta não autorizam registro. Não é um classificador geral de linguagem natural.
