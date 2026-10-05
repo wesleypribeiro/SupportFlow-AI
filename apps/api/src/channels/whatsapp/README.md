@@ -3,7 +3,9 @@
 Esta etapa disponibiliza configuração backend, tipos de transporte e um webhook
 de validação. `createApplication(environment)` compõe `config.whatsapp` e registra
 GET/POST `/webhooks/whatsapp/meta` somente quando habilitado. Desabilitado, ambos
-retornam 404. Projeta eventos validados, mas ainda não os admite/processa nem envia mensagens.
+retornam 404. Projeta eventos validados e admite mensagens na inbox local antes do
+ACK. A execução usa um processador interno opcional; a composição padrão ainda
+não conecta mensagens ao motor nem envia respostas.
 O core, as sete tools, os contratos públicos e o frontend permanecem independentes.
 
 ## Configuração
@@ -90,13 +92,13 @@ Na 2.3, o objeto também passa pela validação de envelope/origem abaixo antes 
 vazio. O handler de erro é local: não retorna corpo recebido, query, assinatura,
 segredos ou exceções, nem introduz logs desses dados.
 
-**O 200 atual significa validação criptográfica, de origem e projeção.** Ainda
-não admite inbox, deduplica ou persiste eventos. Admissão antes do ACK pertence
-ao Milestone 3. Este estágio não oferece a garantia final da spec de
-recepção/processamento. Não é uma integração WhatsApp funcional.
+**Desde a task 3.2, o 200 inclui admissão/deduplicação em RAM.** Não significa
+processamento concluído, envio, entrega ou persistência durável. A conexão
+produtiva ao motor/apresentador/transporte permanece nas tasks posteriores.
 
-GET/POST não recebem dependências de serviço/modelo/repos/ações/transporte, não
-adquirem `runExclusive` e não criam conversa. O parser e os erros de
+O POST recebe somente a fronteira síncrona de admissão da inbox; GET/POST não
+adquirem `runExclusive` nem executam serviço/modelo/repos/ações/transporte.
+O parser e os erros de
 `/api/chat` e `/api/chat/confirm` permanecem nos seus escopos originais.
 Fontes e distinção dos segredos: [compatibilidade Meta](meta/compatibility.md).
 
@@ -162,10 +164,46 @@ telefone e contatos não preenchem o contexto comercial; somente o remetente do
 evento projetado compõe a identidade. Não existe busca/associação por contato
 comercial ou `conversationId` externo, inclusive para sessões web.
 
-O webhook continua somente validando/projetando eventos. Inbox, fila de admissão,
-política de reinício e conexão de texto ao motor pertencem às tasks seguintes.
 Os testes de vínculo chamam o serviço real diretamente com `ScriptedChatModel`
-e repositories em memória, sem implementar esses fluxos antecipadamente.
+e repositories em memória. A inbox da task 3.2 usa a mesma tupla de identidade;
+política de reinício e conexão produtiva de texto ao motor continuam posteriores.
+
+## Inbox e fila local — task 3.2
+
+`inbox.ts` faz `admit(event)` sincronamente, sem aguardar abertura de conversa,
+modelo ou rede. Guarda snapshot e fingerprint canônico pela chave exata
+`(provider, phoneNumberId, messageId)`, incluindo conta, remetente, timestamp,
+tipo, texto/referência e mensagem respondida na comparação. A ordem das
+propriedades não muda o fingerprint; texto/IDs não são aparados. Repetição
+idêntica é no-op em qualquer estado. Colisão não substitui o original nem
+agenda trabalho e produz HTTP 409 vazio, com código de log local sem dados.
+Irmãos válidos do lote continuam admitidos e deduplicáveis em uma reentrega.
+Falha de admissão produz 503 vazio, preservando admissões anteriores do lote.
+
+A fila por `(provider, accountId, phoneNumberId, senderId)` preserva ordem de
+admissão, sem reordenar timestamps. O início cede ao event loop para liberar o
+ACK. Cada callback é aguardado antes do próximo evento da mesma identidade;
+outras identidades progridem independentemente. O callback chama o serviço
+compartilhado diretamente, sem envolver sua chamada em outro `runExclusive`.
+
+Estados: `received → processing → processed` com snapshot da resposta, ou
+`failed` com código controlado. Rejeições síncronas/assíncronas são capturadas
+como `CHAT_ERROR`, sem mensagem/stack/cause; a fila continua e o evento falho
+não é reexecutado por reentrega. Resultados retornados, eventos e leituras usam
+cópias defensivas. `drain(identity?)` aguarda filas nos testes; `activeQueueCount`
+permite verificar remoção das caudas ociosas, mantendo os registros de dedupe.
+
+`createApplication` disponibiliza `whatsappInbox` somente quando habilitado e
+aceita `whatsappProcessor` por composição interna. Sem processador, a mensagem
+termina em `ignored / PROCESSOR_UNAVAILABLE`, sem criar conversa ou inventar
+sucesso. Status não entra nessa inbox nem chama o processador. Os testes injetam
+o serviço real e transporte simulado para provar ACK, dedupe e ordenação; a
+resolução de botões produtiva não é implementada por esse callback de teste.
+
+Não há limites/reinício (3.3), conexão produtiva de texto/apresentação (4.3),
+resolução de referência (5.x) ou outbox/recuperação de entrega (6.x) nesta task.
+O processador é a fronteira de decisões; envio e estado de entrega deverão ser
+tratados separadamente nas tasks próprias, preservando a resposta salva.
 
 ## Verificação local
 
@@ -201,6 +239,12 @@ indevidos, a preservação das requisições autorizadas, o tratamento de falha 
 e a sanitização dos logs.
 
 ### Suíte do canal
+
+`npm test -- apps/api/test/whatsapp-inbox.test.ts apps/api/test/whatsapp-inbox-webhook.test.ts`
+cobre admissão/dedupe, colisões, ACK antes de modelo/envio, um turno por evento,
+correção antes de clique com `ACTION_STALE` no lifecycle real, independência,
+falhas antes de commit, captura de rejeições e remoção de filas. Usa Promises
+controladas, webhook assinado e `ScriptedChatModel`, sem sleeps ou rede externa.
 
 `npm test -- apps/api/test/whatsapp-conversation-bindings.test.ts apps/api/test/whatsapp-boundaries.test.ts apps/api/test/conversation-service.test.ts apps/api/test/conversation-serialization.test.ts`
 cobre o vínculo, cópias defensivas, primeiras mensagens concorrentes, isolamento

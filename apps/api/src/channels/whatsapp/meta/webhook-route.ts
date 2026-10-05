@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import type { WhatsAppConfig } from '../config.js';
+import { InMemoryWhatsAppInbox } from '../inbox.js';
 import { verifyWebhookHandshake, verifyWebhookSignature } from './webhook-security.js';
 import { projectMetaWebhook } from './webhook-projection.js';
 
@@ -8,7 +9,8 @@ import { projectMetaWebhook } from './webhook-projection.js';
 const WEBHOOK_BODY_LIMIT = 1_048_576;
 type WebhookCredentials = Pick<Extract<WhatsAppConfig, { enabled: true }>, 'appSecret' | 'webhookVerifyToken' | 'wabaId' | 'phoneNumberId'>;
 
-export function registerMetaWebhookRoutes(server: FastifyInstance, credentials: WebhookCredentials) {
+export function registerMetaWebhookRoutes(server: FastifyInstance, credentials: WebhookCredentials,
+  inbox: Pick<InMemoryWhatsAppInbox, 'admit'> = new InMemoryWhatsAppInbox()) {
   server.register(async (webhook) => {
     // Allowlist de campos: nem serializers herdados nem IDs fornecidos pelo
     // visitante podem introduzir URL/query, headers, PII ou exceções nos logs.
@@ -75,7 +77,21 @@ export function registerMetaWebhookRoutes(server: FastifyInstance, credentials: 
       if (Object.values(projection.observations).some((count) => count > 0)) {
         request.log.info({ code: 'WHATSAPP_WEBHOOK_ITEMS_IGNORED', counts: projection.observations });
       }
-      // Task 2.3: eventos validados, ainda sem admissão/inbox ou processamento.
+      let collision = false;
+      try {
+        for (const event of projection.events) {
+          // Status não participa da inbox de mensagens nem executa o motor.
+          if (event.type === 'status') continue;
+          if (inbox.admit(event) === 'collision') collision = true;
+        }
+      } catch {
+        // Admissões anteriores do lote ficam deduplicáveis em uma reentrega.
+        return reply.code(503).send();
+      }
+      if (collision) {
+        request.log.info({ code: 'WHATSAPP_INBOX_COLLISION' });
+        return reply.code(409).send();
+      }
       return reply.code(200).send();
     });
   }, { prefix: '/webhooks/whatsapp' });
