@@ -1,4 +1,5 @@
-import type { FastifyInstance } from 'fastify';
+import { randomUUID } from 'node:crypto';
+import type { FastifyInstance, FastifyReply } from 'fastify';
 import type { WhatsAppConfig } from '../config.js';
 import { verifyWebhookHandshake, verifyWebhookSignature } from './webhook-security.js';
 import { projectMetaWebhook } from './webhook-projection.js';
@@ -9,19 +10,42 @@ type WebhookCredentials = Pick<Extract<WhatsAppConfig, { enabled: true }>, 'appS
 
 export function registerMetaWebhookRoutes(server: FastifyInstance, credentials: WebhookCredentials) {
   server.register(async (webhook) => {
+    // Allowlist de campos: nem serializers herdados nem IDs fornecidos pelo
+    // visitante podem introduzir URL/query, headers, PII ou exceções nos logs.
+    webhook.setChildLoggerFactory((logger, _bindings, options) => logger.child({ reqId: randomUUID() }, {
+      ...options,
+      serializers: {
+        ...options.serializers,
+        req: () => ({ channel: 'whatsapp' }),
+        res: (reply: FastifyReply) => ({ statusCode: reply.statusCode }),
+        err: () => ({ code: 'WHATSAPP_WEBHOOK_ERROR' }),
+      },
+    }));
+    // O 404 padrão do Fastify inclui a URL/query tanto na resposta como no log.
+    // Este handler fica restrito ao prefixo do canal, inclusive métodos inválidos.
+    webhook.setNotFoundHandler((_request, reply) => reply.code(404).send());
+    webhook.addHook('onSend', async (request, reply, payload) => {
+      request.body = undefined;
+      if (reply.statusCode >= 400) {
+        request.log.info({ code: 'WHATSAPP_WEBHOOK_REJECTED', statusCode: reply.statusCode });
+      }
+      return payload;
+    });
     // Encapsulamento Fastify: não afeta os parsers das rotas web/health.
     webhook.removeAllContentTypeParsers();
     webhook.addContentTypeParser('application/json', { parseAs: 'buffer', bodyLimit: WEBHOOK_BODY_LIMIT }, (_request, body, done) => {
       done(null, body);
     });
-    webhook.setErrorHandler((error, _request, reply) => {
+    webhook.setErrorHandler((error, request, reply) => {
       const status = error instanceof Error && 'statusCode' in error ? error.statusCode : undefined;
       const invalidRequest = typeof status === 'number' && status >= 400 && status < 500;
       // Inclusive erros de framing/content-type: nunca publicar detalhes do parser.
-      return reply.code(status === 413 ? 413 : invalidRequest ? 400 : 500).send();
+      const statusCode = status === 413 ? 413 : invalidRequest ? 400 : 500;
+      request.log.error({ code: 'WHATSAPP_WEBHOOK_ERROR', statusCode });
+      return reply.code(statusCode).send();
     });
 
-    webhook.get('/webhooks/whatsapp/meta', { exposeHeadRoute: false }, async (request, reply) => {
+    webhook.get('/meta', { exposeHeadRoute: false }, async (request, reply) => {
       const url = request.raw.url ?? '';
       const rawQuery = url.includes('?') ? url.slice(url.indexOf('?') + 1) : '';
       const result = verifyWebhookHandshake(request.query, credentials.webhookVerifyToken, rawQuery);
@@ -29,8 +53,10 @@ export function registerMetaWebhookRoutes(server: FastifyInstance, credentials: 
       return reply.type('text/plain; charset=utf-8').send(result.challenge);
     });
 
-    webhook.post('/webhooks/whatsapp/meta', { bodyLimit: WEBHOOK_BODY_LIMIT }, async (request, reply) => {
+    webhook.post('/meta', { bodyLimit: WEBHOOK_BODY_LIMIT }, async (request, reply) => {
       const body = request.body;
+      // Apenas a variável local retém os bytes durante a verificação/projeção.
+      request.body = undefined;
       if (!Buffer.isBuffer(body)) return reply.code(400).send();
       if (!verifyWebhookSignature(body, request.headers['x-hub-signature-256'], credentials.appSecret)) {
         return reply.code(403).send();
@@ -52,5 +78,5 @@ export function registerMetaWebhookRoutes(server: FastifyInstance, credentials: 
       // Task 2.3: eventos validados, ainda sem admissão/inbox ou processamento.
       return reply.code(200).send();
     });
-  });
+  }, { prefix: '/webhooks/whatsapp' });
 }

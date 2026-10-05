@@ -1,4 +1,4 @@
-# Fronteira WhatsApp — tasks 2.1 a 2.3
+# Fronteira WhatsApp — implementação incremental
 
 Esta etapa disponibiliza configuração backend, tipos de transporte e um webhook
 de validação. `createApplication(environment)` compõe `config.whatsapp` e registra
@@ -142,7 +142,37 @@ correlação/autorização de referências de botão permanece para o Milestone 
 
 ## Verificação local
 
-`npm test -- apps/api/test/whatsapp-config.test.ts apps/api/test/whatsapp-boundaries.test.ts apps/api/test/whatsapp-webhook.test.ts apps/api/test/whatsapp-projection.test.ts`
+### Logs e exposição — implementação da task 2.4
+
+O escopo `/webhooks/whatsapp` substitui serializers de request, response e erro
+por campos permitidos: canal constante, status e código fixo. A correlação de log
+usa UUID local, inclusive se uma composição aceitar `X-Request-ID` externo.
+Query/URL, headers, tokens, texto, nome, contato, referências, previews e
+mensagem/stack/cause de exceções não são registrados. O 404 local também é vazio,
+evitando que o comportamento padrão do Fastify devolva/registre a query de uma
+rota ou método inexistente. Os handlers web permanecem inalterados.
+
+Rejeições registram `WHATSAPP_WEBHOOK_REJECTED` e status; exceções controladas
+registram `WHATSAPP_WEBHOOK_ERROR` e status. Observações de itens ignorados
+continuam limitadas a contagens por código local. Os bytes originais deixam de
+ficar associados ao request quando o POST começa a verificá-los e são liberados
+ao encerrar o handler; o hook de envio também limpa o corpo em caminhos de erro.
+O logger da aplicação mantém seu padrão desabilitado.
+
+[whatsapp-logging.test.ts](../../../test/whatsapp-logging.test.ts) captura o logger
+Pino real habilitado, inclusive entrada/conclusão automáticas e serializers
+herdados deliberadamente inseguros. Cobre sucesso, 400/403/404/413/500,
+contatos/botões, exceção HTTP aninhada, limpeza do corpo e correlação local.
+
+O [proxy HTTPS dedicado](../../../../../deploy/whatsapp/README.md) fornece a
+configuração Nginx, a política de logs e um verificador local com proxy real que
+nega `/api/chat`, `/api/chat/confirm` e outros caminhos/métodos. A execução real
+do verificador ficou impedida no sandbox por ausência de Nginx e restrição de
+sockets; isso permanece pendente, sem ser substituído pelos testes da API.
+
+### Suíte do canal
+
+`npm test -- apps/api/test/whatsapp-config.test.ts apps/api/test/whatsapp-boundaries.test.ts apps/api/test/whatsapp-webhook.test.ts apps/api/test/whatsapp-projection.test.ts apps/api/test/whatsapp-logging.test.ts`
 exercita configuração/startup com sentinelas, contratos de transporte e isolamento
 do frontend/core. Não lê `.env` nem exige rede. A inspeção de fontes inclui
 Next config e contratos compartilhados, impedindo imports do backend e acesso ao env.
