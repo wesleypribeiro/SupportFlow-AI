@@ -66,7 +66,7 @@ describe('isolamento do canal e dos segredos', () => {
           }
           expect(resolve(dirname(path), dependency).startsWith(resolve(root, 'apps/api/src/channels/whatsapp') + sep), path).toBe(true);
         } else {
-          expect(['zod', 'fastify', 'node:crypto'], path).toContain(dependency);
+          expect(['zod', 'fastify', 'node:crypto', '@supportflow/contracts/chat'], path).toContain(dependency);
         }
       }
     }

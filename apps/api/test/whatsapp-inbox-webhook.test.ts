@@ -59,7 +59,12 @@ function application(script: JourneyScript = [], processor: Processor = processT
   const model = createJourneyModel(script);
   const leadRepository = new InMemoryLeadRepository();
   const process = vi.fn<WhatsAppInboxProcessor<LanguageSchoolChatResponse>>((event) => processor(event, app));
-  const app = createApplication(environment, { model, leadRepository, whatsappProcessor: process, now: () => new Date('2030-06-10T12:00:00Z') });
+  const app = createApplication(environment, { model, leadRepository, whatsappProcessor: process,
+    now: () => new Date('2030-06-10T12:00:00Z'),
+    // A segunda mensagem do teste de ordenação tem timestamp anterior à primeira,
+    // mas ambas pertencem à execução corrente (política de reinício da task 3.3).
+    whatsappNow: () => new Date('2030-06-10T11:59:58Z'),
+  });
   assert(app.whatsappInbox); assert(app.whatsappBindings);
   const inbox = app.whatsappInbox;
   cleanups.push(async () => { await inbox.drain(); await app.server.close(); });
@@ -252,7 +257,7 @@ describe('3.2 — webhook assinado, ACK e processamento gerenciado', () => {
     const lines: string[] = [];
     const server = Fastify({ logger: { stream: { write: (line) => { lines.push(line); } } } });
     const process = vi.fn<WhatsAppInboxProcessor<string>>(() => Promise.reject(new Error('PRIVATE_REJECTION_STACK')));
-    const inbox = new InMemoryWhatsAppInbox(process);
+    const inbox = new InMemoryWhatsAppInbox(process, { now: () => new Date('2030-06-10T12:00:00Z') });
     registerMetaWebhookRoutes(server, credentials, inbox);
     cleanups.push(async () => { await inbox.drain(); await server.close(); });
     const message = metaText({ id: 'PRIVATE_ID', from: 'PRIVATE_SENDER', text: { body: 'PRIVATE_BODY' } });
@@ -274,7 +279,7 @@ describe('3.2 — webhook assinado, ACK e processamento gerenciado', () => {
   });
 
   it('falha de admissão retorna 503 vazio e conserva IDs já admitidos para a reentrega', async () => {
-    const server = Fastify(); const inbox = new InMemoryWhatsAppInbox();
+    const server = Fastify(); const inbox = new InMemoryWhatsAppInbox(undefined, { now: () => new Date('2030-06-10T12:00:00Z') });
     const admit = vi.fn((event: WhatsAppInboundMessage) => inbox.admit(event));
     admit.mockImplementationOnce((event) => inbox.admit(event)).mockImplementationOnce(() => { throw new Error('PRIVATE_ADMISSION'); });
     registerMetaWebhookRoutes(server, credentials, { admit });
@@ -288,8 +293,8 @@ describe('3.2 — webhook assinado, ACK e processamento gerenciado', () => {
     expect(inbox.admit(inbox.get(key('one'))!.event)).toBe('duplicate');
   });
 
-  it('composição padrão admite sem executar motor ou resolver botão; desabilitada não cria inbox', async () => {
-    const app = createApplication(environment);
+  it('composição padrão abre sessão vazia sem executar motor ou resolver botão; desabilitada não cria inbox', async () => {
+    const app = createApplication(environment, { whatsappNow: () => new Date('2030-06-10T12:00:00Z') });
     const disabled = createApplication({});
     assert(app.whatsappInbox);
     cleanups.push(async () => { await app.whatsappInbox!.drain(); await app.server.close(); await disabled.server.close(); });
@@ -301,7 +306,8 @@ describe('3.2 — webhook assinado, ACK e processamento gerenciado', () => {
     await app.whatsappInbox.drain();
     expect(app.whatsappInbox.get(key('message-text'))?.state).toBe('ignored');
     expect(app.whatsappInbox.get(key('message-button'))?.state).toBe('ignored');
-    expect(open).not.toHaveBeenCalled(); expect(send).not.toHaveBeenCalled(); expect(confirm).not.toHaveBeenCalled();
-    expect(app.whatsappBindings?.get(identity)).toBeUndefined();
+    expect(open).toHaveBeenCalledOnce(); expect(send).not.toHaveBeenCalled(); expect(confirm).not.toHaveBeenCalled();
+    const binding = app.whatsappBindings?.get(identity); assert(binding);
+    expect(app.conversations.get(binding.conversationId)?.history).toEqual([]);
   });
 });

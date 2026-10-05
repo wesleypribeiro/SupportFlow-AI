@@ -5,7 +5,9 @@ de validação. `createApplication(environment)` compõe `config.whatsapp` e reg
 GET/POST `/webhooks/whatsapp/meta` somente quando habilitado. Desabilitado, ambos
 retornam 404. Projeta eventos validados e admite mensagens na inbox local antes do
 ACK. A execução usa um processador interno opcional; a composição padrão ainda
-não conecta mensagens ao motor nem envia respostas.
+não conecta mensagens ao motor nem envia respostas. Desde a task 3.3, o primeiro
+texto válido abre uma sessão vazia; avisos demonstrativos ficam na inbox e podem
+ser publicados por callback interno injetado.
 O core, as sete tools, os contratos públicos e o frontend permanecem independentes.
 
 ## Configuração
@@ -130,8 +132,8 @@ ou acima de 2.000, para a orientação/validação do motor prevista na 4.3.
 
 Timestamp aceita somente string de dígitos (até 16), converte segundos para
 milissegundos e exige inteiro seguro não negativo representável por `Date`.
-Não usa hora da reentrega, não reordena e não deduplica eventos. Marco de reinício
-e avaliação temporal com clock/janela pertencem às tasks 3.3 e 6.3.
+Não usa hora da reentrega, não reordena e não deduplica eventos. A inbox aplica o
+marco de reinício da task 3.3; a janela geral de entrega pertence à task 6.3.
 
 Extensões externas são descartadas em todos os níveis: perfil, contatos,
 `context.from`, título do botão, billing, erros brutos, `confirmed`, IDs internos,
@@ -166,7 +168,8 @@ comercial ou `conversationId` externo, inclusive para sessões web.
 
 Os testes de vínculo chamam o serviço real diretamente com `ScriptedChatModel`
 e repositories em memória. A inbox da task 3.2 usa a mesma tupla de identidade;
-política de reinício e conexão produtiva de texto ao motor continuam posteriores.
+política de reinício está descrita abaixo, e a conexão produtiva de texto ao motor
+continua posterior.
 
 ## Inbox e fila local — task 3.2
 
@@ -194,16 +197,65 @@ cópias defensivas. `drain(identity?)` aguarda filas nos testes; `activeQueueCou
 permite verificar remoção das caudas ociosas, mantendo os registros de dedupe.
 
 `createApplication` disponibiliza `whatsappInbox` somente quando habilitado e
-aceita `whatsappProcessor` por composição interna. Sem processador, a mensagem
-termina em `ignored / PROCESSOR_UNAVAILABLE`, sem criar conversa ou inventar
-sucesso. Status não entra nessa inbox nem chama o processador. Os testes injetam
+aceita `whatsappProcessor` por composição interna. Sem processador, um texto
+elegível termina em `ignored / PROCESSOR_UNAVAILABLE`, depois da preparação de
+sessão da task 3.3, sem inventar sucesso comercial. Status não entra nessa inbox
+nem chama o processador. Os testes injetam
 o serviço real e transporte simulado para provar ACK, dedupe e ordenação; a
 resolução de botões produtiva não é implementada por esse callback de teste.
 
-Não há limites/reinício (3.3), conexão produtiva de texto/apresentação (4.3),
-resolução de referência (5.x) ou outbox/recuperação de entrega (6.x) nesta task.
+Não há conexão produtiva de texto/apresentação (4.3), resolução de referência
+(5.x) ou outbox/recuperação de entrega (6.x) nesta etapa.
 O processador é a fronteira de decisões; envio e estado de entrega deverão ser
 tratados separadamente nas tasks próprias, preservando a resposta salva.
+
+## Admissão e reinício demonstrativo — task 3.3
+
+A inbox admite no máximo **10.000 mensagens por execução** e **100 aguardando
+por vínculo**, além da que já está em processamento. A verificação e a reserva
+da capacidade ocorrem sincronamente antes do ACK. Limites podem ser reduzidos
+na composição interna com `whatsappInboxLimits`; não são parâmetros do webhook.
+O término libera contadores/filas ociosas, mas nunca IDs de dedupe ou resultados.
+Inclusive falhas e eventos ignorados continuam deduplicáveis até o reinício.
+
+Capacidade cheia produz **503 vazio** para trabalho novo. Duplicatas continuam
+com 200 e colisões com 409, preservando o original. Status continuam reconhecidos
+fora da inbox, inclusive sob pressão; sua correlação de entrega pertence à 6.2.
+Em lote parcialmente recusado, irmãos elegíveis continuam sendo examinados e
+admitidos; o lote recebe 503 e a reentrega deduplica os já admitidos.
+
+`whatsappNow` injeta o relógio do canal, usando `now` como padrão. Assim, um
+harness pode separar o relógio comercial fixo do relógio real do webhook.
+Na criação da inbox, `startedAt` captura o instante uma única vez com
+`Math.ceil(ms / 1000) * 1000`. Evento anterior ao marco é reconhecido com 200 e
+descartado antes de ocupar capacidade, criar conversa ou chamar o processador.
+O log registra apenas `WHATSAPP_BEFORE_START_IGNORED` e contagem. Eventos no
+marco são elegíveis; o marco não acompanha mudanças posteriores do clock.
+
+`demo-session.ts` prepara a sessão dentro da fila existente. Primeiro texto
+válido pelo contrato de chat abre a conversa vazia pelo serviço compartilhado,
+com defaults oficiais e sem preencher dados de perfil/telefone. Um botão sem
+vínculo resulta em `ignored / SESSION_UNAVAILABLE`, sem chamar processador ou
+abrir conversa. Nenhuma referência antiga reconstrói ação, cadastro ou reserva.
+Texto inicial inválido fica `ignored / INVALID_INITIAL_TEXT`; a orientação
+completa para texto inválido continua no escopo da 4.3.
+
+Avisos de nova sessão e confirmação indisponível são textos fixos em `notice`,
+separados do envelope comercial. O callback opcional `whatsappOnNotice` recebe
+cópias do evento/aviso após salvar o resultado e depois do ACK. A publicação
+exige idade do evento original entre zero (inclusive) e 24 horas (exclusive),
+verificada imediatamente antes do callback. Falha fica em `noticeError` com
+código fixo `NOTICE_ERROR`, sem apagar resultado ou causar retry. O callback
+não comprova entrega; sem ele, o aviso permanece apenas local. Os testes usam
+transporte simulado; cliente Meta, apresentador, outbox e janela geral de envios
+permanecem nas tasks próprias.
+
+Toda a demonstração continua em RAM e em uma instância. Reiniciar descarta
+conversas, vínculos, dedupe, ações, recibos, leads, reservas e handoffs. Uma nova
+sessão informa que registros anteriores não foram recuperados. Descartar
+mensagens anteriores ao marco sacrifica mensagens atrasadas; não oferece
+deduplicação durável, recuperação comercial ou entrega exatamente uma vez.
+Não utilizar reservas comerciais reais nesta demonstração.
 
 ## Verificação local
 
@@ -239,6 +291,12 @@ indevidos, a preservação das requisições autorizadas, o tratamento de falha 
 e a sanitização dos logs.
 
 ### Suíte do canal
+
+`npm test -- apps/api/test/whatsapp-admission-limits.test.ts apps/api/test/whatsapp-demo-restart.test.ts`
+cobre limites reais e reduzidos, 503 sem eviction, duplicatas/status, lotes
+parciais, concorrência, arredondamento do marco, logs sanitizados e reinício com
+repositories reais. Verifica perda de cadastro/reserva/handoff/recibo, botão
+perdido sem conversa, nova sessão vazia e avisos com transporte simulado.
 
 `npm test -- apps/api/test/whatsapp-inbox.test.ts apps/api/test/whatsapp-inbox-webhook.test.ts`
 cobre admissão/dedupe, colisões, ACK antes de modelo/envio, um turno por evento,

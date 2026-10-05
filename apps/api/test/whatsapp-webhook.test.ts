@@ -69,27 +69,34 @@ describe('segurança pura do webhook', () => {
 });
 
 const cleanups: (() => Promise<void>)[] = [];
-function application(options: { model?: ScriptedChatModel; env?: NodeJS.ProcessEnv; observeOnly?: boolean } = {}) {
+function application(options: { model?: ScriptedChatModel; env?: NodeJS.ProcessEnv; observeOnly?: boolean; opensSession?: boolean } = {}) {
   const model = options.model ?? new ScriptedChatModel([]);
   const schoolRepository = new InMemorySchoolRepository(schoolFixture, courseFixtures);
   const leadRepository = new InMemoryLeadRepository();
   const trialClassRepository = new InMemoryTrialClassRepository(slotFixtures);
   const handoffRepository = new InMemoryHandoffRepository();
-  const app = createApplication(options.env ?? environment, { model, schoolRepository, leadRepository, trialClassRepository, handoffRepository });
+  const app = createApplication(options.env ?? environment, { model, schoolRepository, leadRepository, trialClassRepository, handoffRepository,
+    whatsappNow: () => new Date('2030-06-10T12:00:00Z'),
+  });
   // Spies observam implementações reais; nenhum retorno comercial é simulado.
   const observers = [
     ...(['getSchool', 'listActiveCourses', 'findActiveCourseById'] as const).map((key) => vi.spyOn(schoolRepository, key)),
     ...(['findByConversationId', 'createForConversation', 'updateForConversation'] as const).map((key) => vi.spyOn(leadRepository, key)),
     ...(['listSlotsByCourseId', 'findSlotById', 'findConfirmedBySlotId', 'reserveSlot'] as const).map((key) => vi.spyOn(trialClassRepository, key)),
     ...(['findOpenByConversationId', 'requestForConversation'] as const).map((key) => vi.spyOn(handoffRepository, key)),
-    ...(['openConversation', 'sendMessage', 'confirmAction', 'getCurrentPendingAction'] as const).map((key) => vi.spyOn(app.conversationService, key)),
-    ...(['create', 'get', 'save', 'runExclusive'] as const).map((key) => vi.spyOn(app.conversations, key)),
+    ...(['sendMessage', 'confirmAction', 'getCurrentPendingAction'] as const).map((key) => vi.spyOn(app.conversationService, key)),
+    vi.spyOn(app.conversations, 'get'),
     ...(['prepare', 'stage', 'pending', 'invalidate', 'invalidateCurrent', 'confirm'] as const).map((key) => vi.spyOn(InMemoryPendingActions.prototype, key)),
   ];
+  const sessionObservers = [vi.spyOn(app.conversationService, 'openConversation'),
+    ...(['create', 'save', 'runExclusive'] as const).map((key) => vi.spyOn(app.conversations, key))];
   cleanups.push(async () => {
+    await app.whatsappInbox?.drain();
     await app.server.close();
     if (options.observeOnly ?? true) {
       for (const observer of observers) expect(observer).not.toHaveBeenCalled();
+      // Desde a 3.3, texto elegível abre somente a sessão vazia depois do ACK.
+      for (const observer of sessionObservers) expect(observer).toHaveBeenCalledTimes(options.opensSession ? 1 : 0);
       expect(model.calls).toHaveLength(0);
       expect(model.contextCalls).toHaveLength(0);
     }
@@ -225,7 +232,7 @@ describe('POST /webhooks/whatsapp/meta — bytes antes do JSON', () => {
   it('assina UTF-8 multibyte completo sem conversão antes da autenticação', async () => {
     const body = Buffer.from(JSON.stringify(metaEnvelope([metaChange({ messages: [metaText()] })])));
     expect(body.length).toBeGreaterThan(body.toString().length);
-    expect((await post(application(), body)).statusCode).toBe(200);
+    expect((await post(application({ opensSession: true }), body)).statusCode).toBe(200);
   });
 
   it.each(['', '{"object":', 'not JSON', 'null', '[]', '"text"', 'true', '42'])('assinatura correta e documento inválido → 400 (%j)', async (input) => {
@@ -305,7 +312,7 @@ describe('POST /webhooks/whatsapp/meta — projeção validada', () => {
       ] },
       { id: environment.META_WABA_ID, changes: [metaChange({ statuses: [metaStatus({ status: 'read' }), metaStatus({ status: 'failed' })] })] },
     ] });
-    const response = await post(application(), Buffer.from(JSON.stringify(input)));
+    const response = await post(application({ opensSession: true }), Buffer.from(JSON.stringify(input)));
     expect(response.statusCode).toBe(200); expect(response.body).toBe('');
     expect(project).toHaveBeenCalledOnce();
     const result = project.mock.results[0]?.value as projection.MetaProjectionResult;
@@ -336,7 +343,7 @@ describe('POST /webhooks/whatsapp/meta — projeção validada', () => {
 
   it('isola itens inválidos e ignora mídia/tipos desconhecidos sem modelo, download ou negócio', async () => {
     const project = vi.spyOn(projection, 'projectMetaWebhook');
-    const app = application();
+    const app = application({ opensSession: true });
     const observations = vi.fn();
     app.server.addHook('onRequest', async (request) => {
       vi.spyOn(request.log, 'info').mockImplementation(observations);
