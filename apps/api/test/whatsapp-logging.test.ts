@@ -3,6 +3,7 @@ import Fastify from 'fastify';
 import type { FastifyInstance, InjectOptions } from 'fastify';
 import { afterEach, describe, expect, it } from 'vitest';
 import { registerMetaWebhookRoutes } from '../src/channels/whatsapp/meta/webhook-route.js';
+import { InMemoryWhatsAppInbox } from '../src/channels/whatsapp/inbox.js';
 import { metaButton, metaChange, metaEnvelope, metaOrigin, metaStatus, metaText } from './helpers/meta-webhook.js';
 
 const path = '/webhooks/whatsapp/meta';
@@ -41,7 +42,9 @@ function post(body = payload): InjectOptions {
 }
 
 const servers: FastifyInstance[] = [];
+const inboxes: InMemoryWhatsAppInbox[] = [];
 afterEach(async () => {
+  await Promise.all(inboxes.splice(0).map((inbox) => inbox.drain()));
   for (const server of servers.splice(0)) await server.close();
 });
 
@@ -59,7 +62,9 @@ function loggedServer() {
     requestIdHeader: 'x-request-id',
   });
   servers.push(server);
-  registerMetaWebhookRoutes(server, credentials);
+  const inbox = new InMemoryWhatsAppInbox(undefined, { now: () => new Date('2030-06-10T12:00:00Z') });
+  inboxes.push(inbox);
+  registerMetaWebhookRoutes(server, credentials, inbox);
   const inject = (options: InjectOptions) => server.inject({ ...options,
     headers: { authorization: `Bearer ${privateData.accessToken}`, cookie: privateData.contact,
       'x-request-id': privateData.requestId, 'x-private-secret': privateData.appSecret, ...options.headers },

@@ -15,7 +15,7 @@ function gate() {
   return { promise, release };
 }
 function inbox<Response>(processor?: WhatsAppInboxProcessor<Response>) {
-  const instance = new InMemoryWhatsAppInbox(processor);
+  const instance = new InMemoryWhatsAppInbox(processor, { now: () => new Date(event.occurredAt) });
   inboxes.push(instance);
   return instance;
 }

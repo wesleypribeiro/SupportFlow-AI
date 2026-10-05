@@ -78,16 +78,25 @@ export function registerMetaWebhookRoutes(server: FastifyInstance, credentials: 
         request.log.info({ code: 'WHATSAPP_WEBHOOK_ITEMS_IGNORED', counts: projection.observations });
       }
       let collision = false;
+      let capacity = false;
+      let beforeStart = 0;
       try {
         for (const event of projection.events) {
           // Status não participa da inbox de mensagens nem executa o motor.
           if (event.type === 'status') continue;
-          if (inbox.admit(event) === 'collision') collision = true;
+          const admission = inbox.admit(event);
+          if (admission === 'collision') collision = true;
+          if (admission === 'capacity') capacity = true;
+          if (admission === 'before_start') beforeStart += 1;
         }
       } catch {
         // Admissões anteriores do lote ficam deduplicáveis em uma reentrega.
         return reply.code(503).send();
       }
+      if (beforeStart > 0) {
+        request.log.info({ code: 'WHATSAPP_BEFORE_START_IGNORED', count: beforeStart });
+      }
+      if (capacity) return reply.code(503).send();
       if (collision) {
         request.log.info({ code: 'WHATSAPP_INBOX_COLLISION' });
         return reply.code(409).send();

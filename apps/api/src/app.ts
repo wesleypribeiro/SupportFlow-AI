@@ -2,8 +2,9 @@ import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
 import { ChatOpenAI } from '@langchain/openai';
 import { loadWhatsAppConfig } from './channels/whatsapp/config.js';
 import { InMemoryWhatsAppConversationBindings } from './channels/whatsapp/conversation-bindings.js';
+import { WhatsAppDemoSessionPolicy } from './channels/whatsapp/demo-session.js';
 import { InMemoryWhatsAppInbox } from './channels/whatsapp/inbox.js';
-import type { WhatsAppInboxProcessor } from './channels/whatsapp/inbox.js';
+import type { WhatsAppInboxOptions, WhatsAppInboxProcessor } from './channels/whatsapp/inbox.js';
 import { registerMetaWebhookRoutes } from './channels/whatsapp/meta/webhook-route.js';
 import { createLeadResultSchema, languageSchoolChatResponseSchema, scheduleTrialClassResultSchema, transferToHumanResultSchema } from '@supportflow/contracts/language-school';
 import type { LanguageSchoolChatResponse } from '@supportflow/contracts/language-school';
@@ -54,6 +55,9 @@ export function createApplication(environment: NodeJS.ProcessEnv, options: {
   handoffRepository?: HandoffRepository;
   now?: () => Date;
   whatsappProcessor?: WhatsAppInboxProcessor<LanguageSchoolChatResponse>;
+  whatsappNow?: () => Date;
+  whatsappInboxLimits?: WhatsAppInboxOptions['limits'];
+  whatsappOnNotice?: WhatsAppInboxOptions['onNotice'];
 } = {}) {
   const config = {
     ...loadCoreConfig(environment),
@@ -80,17 +84,6 @@ export function createApplication(environment: NodeJS.ProcessEnv, options: {
     ? new ChatOpenAI({ apiKey: config.llm.apiKey, model: config.llm.model })
     : null);
   const server = createServer();
-  const whatsappInbox = config.whatsapp.enabled
-    ? new InMemoryWhatsAppInbox(options.whatsappProcessor)
-    : undefined;
-  if (config.whatsapp.enabled) {
-    registerMetaWebhookRoutes(server, {
-      appSecret: config.whatsapp.appSecret,
-      webhookVerifyToken: config.whatsapp.webhookVerifyToken,
-      wabaId: config.whatsapp.wabaId,
-      phoneNumberId: config.whatsapp.phoneNumberId,
-    }, whatsappInbox);
-  }
   const conversations = new InMemoryConversations(createConversationContext);
   const actions = createLanguageSchoolPendingActions();
   const scheduleTrialClass = createScheduleTrialClassTool({
@@ -127,6 +120,22 @@ export function createApplication(environment: NodeJS.ProcessEnv, options: {
   const whatsappBindings = config.whatsapp.enabled
     ? new InMemoryWhatsAppConversationBindings(conversationService)
     : undefined;
+  const whatsappInbox = whatsappBindings
+    ? new InMemoryWhatsAppInbox(options.whatsappProcessor, {
+      now: options.whatsappNow ?? now,
+      sessions: new WhatsAppDemoSessionPolicy(whatsappBindings),
+      ...(options.whatsappInboxLimits && { limits: options.whatsappInboxLimits }),
+      ...(options.whatsappOnNotice && { onNotice: options.whatsappOnNotice }),
+    })
+    : undefined;
+  if (config.whatsapp.enabled) {
+    registerMetaWebhookRoutes(server, {
+      appSecret: config.whatsapp.appSecret,
+      webhookVerifyToken: config.whatsapp.webhookVerifyToken,
+      wabaId: config.whatsapp.wabaId,
+      phoneNumberId: config.whatsapp.phoneNumberId,
+    }, whatsappInbox);
+  }
 
   // Ponto interno de composição; argumentos não vêm do navegador.
   const prepareAction = (conversationId: string, proposal: unknown) => conversations.runExclusive(conversationId, () => {
