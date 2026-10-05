@@ -43,11 +43,18 @@ por padrão; os testes habilitam o Pino real para provar a sanitização.
 
 Requisitos: Nginx compilado com SSL, Node.js 24 e OpenSSL. Use um diretório de
 runtime privado **fora do repositório** contendo `certificate.pem`,
-`private-key.pem`, `logs/`, `body-temp/` e `proxy-temp/`; restrinja seu acesso ao
+`private-key.pem`, `logs/`, `body-temp/`, `proxy-temp/`, `fastcgi-temp/`,
+`uwsgi-temp/` e `scgi-temp/`; restrinja seu acesso ao
 usuário que executará o processo. O certificado deve corresponder ao hostname
 utilizado pelo túnel para chegar ao proxy. Não versionar certificados privados,
 credenciais ou logs. Mantenha HOST da API em `127.0.0.1`. A cópia de `nginx.conf`
 deve ficar nesse mesmo diretório para resolver os caminhos dos certificados.
+
+No Fedora, o Nginx pode tentar utilizar diretórios temporários do sistema, como 
+/var/lib/nginx/tmp/fastcgi, causando erros de permissão. Por isso, todos os 
+diretórios temporários utilizados pelo proxy são configurados dentro do 
+diretório privado de runtime. Dessa forma, o serviço pode ser executado sem 
+sudo e sem alterar as permissões dos diretórios do sistema.
 
 Na raiz do repositório, substitua o caminho ilustrativo pelo diretório preparado:
 
@@ -90,10 +97,18 @@ validação **não foi concluída**; testes de logger ou inspeção do arquivo n
 substituem a execução do proxy. Tampouco esse ensaio substitui a homologação
 externa da task 7.4.
 
-Na implementação de 2026-10-05, o sandbox retornou `ENOENT` ao executar Nginx
-(binário ausente); uma tentativa mínima de abrir loopback também retornou
-`EPERM`. Portanto o bloqueio real pelo proxy ainda precisa ser validado em um
-ambiente com esses requisitos. Nenhuma aprovação dessa validação é alegada.
+A validação inicial no sandbox não pôde ser concluída devido à ausência do Nginx (`ENOENT`) e às restrições de abertura de sockets (`EPERM`).
+
+Em 05/10/2026, o verificador foi executado com sucesso em ambiente local Fedora,
+sem `sudo`. Foi necessário configurar os diretórios temporários do Nginx dentro
+do runtime isolado para evitar erros de permissão.
+
+O teste confirmou a preservação das requisições GET/POST, o bloqueio de 30
+acessos não autorizados, o retorno HTTP 502 diante da indisponibilidade do
+upstream e a sanitização dos logs.
+
+Resultado:`Proxy HTTPS validado: GET/POST preservados, 30 acessos negados, falha 502 e logs sanitizados.`
+Nenhuma aprovação dessa validação é alegada.
 
 Referências primárias consultadas em 2026-10-05: [location e URI normalizada](https://nginx.org/en/docs/http/ngx_http_core_module.html#location),
 [proxy_pass e preservação da URI](https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_pass),

@@ -166,9 +166,12 @@ contatos/botões, exceção HTTP aninhada, limpeza do corpo e correlação local
 
 O [proxy HTTPS dedicado](../../../../../deploy/whatsapp/README.md) fornece a
 configuração Nginx, a política de logs e um verificador local com proxy real que
-nega `/api/chat`, `/api/chat/confirm` e outros caminhos/métodos. A execução real
-do verificador ficou impedida no sandbox por ausência de Nginx e restrição de
-sockets; isso permanece pendente, sem ser substituído pelos testes da API.
+nega `/api/chat`, `/api/chat/confirm` e outros caminhos/métodos. A execução
+inicial do verificador ficou impedida no sandbox por ausência do Nginx e 
+restrições de sockets. Posteriormente, a validação foi concluída com sucesso no 
+ambiente local Fedora em 05/10/2026, confirmando o bloqueio de 30 acessos 
+indevidos, a preservação das requisições autorizadas, o tratamento de falha 502 
+e a sanitização dos logs.
 
 ### Suíte do canal
 
