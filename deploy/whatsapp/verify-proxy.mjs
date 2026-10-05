@@ -57,9 +57,16 @@ function exchange(port, ca, method, path, payload) {
 try {
   await command(nginx, ['-v']);
   directory = await mkdtemp(join(tmpdir(), 'supportflow-whatsapp-proxy-'));
-  await mkdir(join(directory, 'logs'));
-  await mkdir(join(directory, 'body-temp'));
-  await mkdir(join(directory, 'proxy-temp'));
+  for (const dir of [
+    'logs',
+    'body-temp',
+    'proxy-temp',
+    'fastcgi-temp',
+    'uwsgi-temp',
+    'scgi-temp',
+  ]) {
+    await mkdir(join(directory, dir));
+  }
   await command('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1',
     '-subj', '/CN=localhost', '-addext', 'subjectAltName=IP:127.0.0.1',
     '-keyout', join(directory, 'private-key.pem'), '-out', join(directory, 'certificate.pem')]);
