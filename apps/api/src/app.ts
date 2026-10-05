@@ -2,8 +2,11 @@ import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
 import { ChatOpenAI } from '@langchain/openai';
 import { loadWhatsAppConfig } from './channels/whatsapp/config.js';
 import { InMemoryWhatsAppConversationBindings } from './channels/whatsapp/conversation-bindings.js';
+import { InMemoryWhatsAppInbox } from './channels/whatsapp/inbox.js';
+import type { WhatsAppInboxProcessor } from './channels/whatsapp/inbox.js';
 import { registerMetaWebhookRoutes } from './channels/whatsapp/meta/webhook-route.js';
 import { createLeadResultSchema, languageSchoolChatResponseSchema, scheduleTrialClassResultSchema, transferToHumanResultSchema } from '@supportflow/contracts/language-school';
+import type { LanguageSchoolChatResponse } from '@supportflow/contracts/language-school';
 import { registerChatRoute } from './core/chat-route.js';
 import { createChatRunner } from './core/chat.js';
 import { createConversationService } from './core/conversation-service.js';
@@ -50,6 +53,7 @@ export function createApplication(environment: NodeJS.ProcessEnv, options: {
   trialClassRepository?: TrialClassRepository;
   handoffRepository?: HandoffRepository;
   now?: () => Date;
+  whatsappProcessor?: WhatsAppInboxProcessor<LanguageSchoolChatResponse>;
 } = {}) {
   const config = {
     ...loadCoreConfig(environment),
@@ -76,13 +80,16 @@ export function createApplication(environment: NodeJS.ProcessEnv, options: {
     ? new ChatOpenAI({ apiKey: config.llm.apiKey, model: config.llm.model })
     : null);
   const server = createServer();
+  const whatsappInbox = config.whatsapp.enabled
+    ? new InMemoryWhatsAppInbox(options.whatsappProcessor)
+    : undefined;
   if (config.whatsapp.enabled) {
     registerMetaWebhookRoutes(server, {
       appSecret: config.whatsapp.appSecret,
       webhookVerifyToken: config.whatsapp.webhookVerifyToken,
       wabaId: config.whatsapp.wabaId,
       phoneNumberId: config.whatsapp.phoneNumberId,
-    });
+    }, whatsappInbox);
   }
   const conversations = new InMemoryConversations(createConversationContext);
   const actions = createLanguageSchoolPendingActions();
@@ -152,5 +159,5 @@ export function createApplication(environment: NodeJS.ProcessEnv, options: {
       return transferToHuman(input, { conversationId, visitorIntent });
     });
 
-  return { server, config, catalogTools, conversations, conversationService, whatsappBindings, prepareAction, prepareLead, prepareTrialClass, getAvailableSlots, requestHumanHandoff };
+  return { server, config, catalogTools, conversations, conversationService, whatsappBindings, whatsappInbox, prepareAction, prepareLead, prepareTrialClass, getAvailableSlots, requestHumanHandoff };
 }
