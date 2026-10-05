@@ -49,11 +49,21 @@ describe('isolamento do canal e dos segredos', () => {
     }
   });
 
-  it('canal não importa core, contratos comerciais, módulos escolares ou SDKs', () => {
+  it('canal só acessa tipos do serviço compartilhado, sem importar implementações do core, contratos comerciais, módulos ou SDKs', () => {
     for (const path of sources(resolve(root, 'apps/api/src/channels/whatsapp'))) {
       expect(readFileSync(path, 'utf8'), path).not.toMatch(/process\.env/);
       for (const dependency of imports(path)) {
         if (dependency.startsWith('.')) {
+          if (resolve(dirname(path), dependency) === resolve(root, 'apps/api/src/core/conversation-service.js')) {
+            const source = ts.createSourceFile(path, readFileSync(path, 'utf8'), ts.ScriptTarget.Latest, true);
+            const declarations = source.statements.filter((statement) => ts.isImportDeclaration(statement)
+              && ts.isStringLiteral(statement.moduleSpecifier) && statement.moduleSpecifier.text === dependency);
+            expect(declarations.length, path).toBeGreaterThan(0);
+            for (const declaration of declarations) {
+              expect(ts.isImportDeclaration(declaration) && declaration.importClause?.isTypeOnly, path).toBe(true);
+            }
+            continue;
+          }
           expect(resolve(dirname(path), dependency).startsWith(resolve(root, 'apps/api/src/channels/whatsapp') + sep), path).toBe(true);
         } else {
           expect(['zod', 'fastify', 'node:crypto'], path).toContain(dependency);

@@ -1,6 +1,7 @@
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import { ChatOpenAI } from '@langchain/openai';
 import { loadWhatsAppConfig } from './channels/whatsapp/config.js';
+import { InMemoryWhatsAppConversationBindings } from './channels/whatsapp/conversation-bindings.js';
 import { registerMetaWebhookRoutes } from './channels/whatsapp/meta/webhook-route.js';
 import { createLeadResultSchema, languageSchoolChatResponseSchema, scheduleTrialClassResultSchema, transferToHumanResultSchema } from '@supportflow/contracts/language-school';
 import { registerChatRoute } from './core/chat-route.js';
@@ -116,6 +117,9 @@ export function createApplication(environment: NodeJS.ProcessEnv, options: {
     parseResponse: (response) => languageSchoolChatResponseSchema.parse(response),
   });
   registerChatRoute(server, conversationService);
+  const whatsappBindings = config.whatsapp.enabled
+    ? new InMemoryWhatsAppConversationBindings(conversationService)
+    : undefined;
 
   // Ponto interno de composição; argumentos não vêm do navegador.
   const prepareAction = (conversationId: string, proposal: unknown) => conversations.runExclusive(conversationId, () => {
@@ -148,5 +152,5 @@ export function createApplication(environment: NodeJS.ProcessEnv, options: {
       return transferToHuman(input, { conversationId, visitorIntent });
     });
 
-  return { server, config, catalogTools, conversations, conversationService, prepareAction, prepareLead, prepareTrialClass, getAvailableSlots, requestHumanHandoff };
+  return { server, config, catalogTools, conversations, conversationService, whatsappBindings, prepareAction, prepareLead, prepareTrialClass, getAvailableSlots, requestHumanHandoff };
 }

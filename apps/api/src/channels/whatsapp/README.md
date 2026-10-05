@@ -140,6 +140,33 @@ payload/identificadores. Mídia, reação, botão de template, list reply e tipo
 desconhecidos não geram evento, download, modelo ou escrita comercial. A
 correlação/autorização de referências de botão permanece para o Milestone 5.
 
+## Vínculo interno de conversa — task 3.1
+
+`conversation-bindings.ts` mantém vínculos em memória por tupla exata
+`(provider, accountId, phoneNumberId, senderId)`. A composição disponibiliza
+`whatsappBindings` somente quando o canal está habilitado. `get` consulta sem
+criar estado; `getOrCreate` abre uma conversa vazia pelo serviço compartilhado,
+com ID e defaults gerados no backend. O chamador deve fornecer identidade já
+autenticada/projetada e decidir a elegibilidade antes de solicitar criação.
+
+A reserva da abertura é síncrona por identidade, antes de aguardar o serviço:
+duas primeiras chamadas compartilham a mesma abertura. Só há vínculo consultável
+depois da conversa salva; falha libera a reserva sem publicar vínculo. Essa
+reserva não ordena turnos nem adquire o lock do core. Mensagens e confirmações
+continuam usando a serialização existente do serviço. Outras identidades podem
+abrir conversas independentemente.
+
+Entradas e retornos são cópias defensivas, inclusive para chamadores concorrentes.
+A chave preserva IDs opacos e separa campos sem colisões por delimitador. Perfil,
+telefone e contatos não preenchem o contexto comercial; somente o remetente do
+evento projetado compõe a identidade. Não existe busca/associação por contato
+comercial ou `conversationId` externo, inclusive para sessões web.
+
+O webhook continua somente validando/projetando eventos. Inbox, fila de admissão,
+política de reinício e conexão de texto ao motor pertencem às tasks seguintes.
+Os testes de vínculo chamam o serviço real diretamente com `ScriptedChatModel`
+e repositories em memória, sem implementar esses fluxos antecipadamente.
+
 ## Verificação local
 
 ### Logs e exposição — implementação da task 2.4
@@ -174,6 +201,12 @@ indevidos, a preservação das requisições autorizadas, o tratamento de falha 
 e a sanitização dos logs.
 
 ### Suíte do canal
+
+`npm test -- apps/api/test/whatsapp-conversation-bindings.test.ts apps/api/test/whatsapp-boundaries.test.ts apps/api/test/conversation-service.test.ts apps/api/test/conversation-serialization.test.ts`
+cobre o vínculo, cópias defensivas, primeiras mensagens concorrentes, isolamento
+por conta/número/remetente, metadados sem cadastro e separação de sessões web.
+Também verifica falhas de abertura/primeiro turno e preservação de ações e recibos
+de remetentes que informam o mesmo contato comercial.
 
 `npm test -- apps/api/test/whatsapp-config.test.ts apps/api/test/whatsapp-boundaries.test.ts apps/api/test/whatsapp-webhook.test.ts apps/api/test/whatsapp-projection.test.ts apps/api/test/whatsapp-logging.test.ts`
 exercita configuração/startup com sentinelas, contratos de transporte e isolamento
