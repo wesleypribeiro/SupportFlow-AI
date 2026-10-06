@@ -195,7 +195,6 @@ describe('ConversationContext e applyContextPatch', () => {
   });
 
   it.each([
-    patch({ goal: 'viagem' }),
     patch({ name: 'Ana' }),
     patch({ contact: { type: 'email', value: 'ana@example.com' } }),
   ])('rejeita dado que não veio da mensagem atual do visitante: %j', (input) => {
@@ -203,6 +202,35 @@ describe('ConversationContext e applyContextPatch', () => {
 
     expect(() => applyContextPatch(initial, input, 'Olá!', courses)).toThrow();
     expect(initial).toEqual(createConversationContext());
+  });
+
+  it.each([
+    { goal: null, message: 'Quais cursos vocês oferecem?' },
+    { goal: null, message: 'Quanto custa o curso?' },
+    { goal: 'entrevistas de emprego', message: 'Pode continuar?' },
+    { goal: null, message: 'Estou viajando.' },
+  ])('descarta objetivo inferido sem fonte literal preservando contexto e patch: %j', ({ goal, message }) => {
+    const current = Object.freeze({ ...createConversationContext(), goal, revision: goal === null ? 0 : 2 });
+    const input = Object.freeze(patch({ goal: 'viagem' }));
+    expect(applyContextPatch(current, input, message, courses)).toEqual(current);
+    expect(input.goal).toBe('viagem');
+  });
+
+  it('ignora somente o objetivo inferido e aplica nome legítimo com uma única nova revisão', () => {
+    const current = { ...createConversationContext(), goal: 'entrevistas', revision: 2 };
+    const input = Object.freeze(patch({ goal: 'viagem', name: 'Ana' }));
+    expect(applyContextPatch(current, input, 'Meu nome é Ana.', courses))
+      .toEqual({ ...current, name: 'Ana', revision: 3 });
+    expect(current.name).toBeNull(); expect(input.goal).toBe('viagem');
+  });
+
+  it.each([
+    patch({ goal: 'viagem', name: 'Ana' }),
+    patch({ goal: 'viagem', contact: { type: 'email', value: 'inventado@example.com' } }),
+  ])('descartar objetivo inferido não relaxa dados pessoais sem evidência: %j', (input) => {
+    const current = createConversationContext();
+    expect(() => applyContextPatch(current, input, 'Quais cursos vocês oferecem?', courses)).toThrow();
+    expect(current).toEqual(createConversationContext());
   });
 
   it('não aceita fragmentos internos de palavras como origem de dados pessoais', () => {

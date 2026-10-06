@@ -103,13 +103,18 @@ export function applyContextPatch(
 ): ConversationContext {
   const patch = contextPatchSchema.parse(input);
   const previous = conversationContextSchema.parse(current);
+  // Uma inferência sem trecho literal não é mudança oficial nem motivo para
+  // interromper uma consulta. Preserva o objetivo vigente sem mutar o patch.
+  const goal = patch.goal !== null
+    && (patch.goal === previous.goal || containsLiteral(message, patch.goal))
+    ? patch.goal
+    : previous.goal;
 
   // Repetições exatas do estado vigente não são alterações. O schema inteiro já
   // foi validado; somente valores diferentes ainda exigem fonte na mensagem atual.
   const repeatedContact = patch.contact?.type === previous.contact?.type
     && patch.contact?.value === previous.contact?.value;
   const proposedChanges = [
-    patch.goal === previous.goal ? null : patch.goal,
     patch.name === previous.name ? null : patch.name,
     repeatedContact ? null : patch.contact?.value ?? null,
   ];
@@ -124,7 +129,7 @@ export function applyContextPatch(
     : resolveCourse(patch.courseReference, message, courses) ?? previous.courseId;
   const next = {
     ...previous,
-    goal: patch.goal ?? previous.goal,
+    goal,
     name: patch.name ?? previous.name,
     contact: patch.contact ?? previous.contact,
     courseId,

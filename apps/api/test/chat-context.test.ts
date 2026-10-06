@@ -6,6 +6,10 @@ import { languageSchoolChatResponseSchema } from '@supportflow/contracts/languag
 import { createApplication } from '../src/app.js';
 import { conversationContextSchema } from '../src/modules/language-school/domain/conversation-context.js';
 import { ScriptedChatModel } from './helpers/scripted-chat-model.js';
+import { createJourneyModel, leadTurn, query } from './helpers/journey-script.js';
+import { courseFixtures, schoolFixture } from '../src/modules/language-school/infrastructure/catalog-fixtures.js';
+import { InMemorySchoolRepository } from '../src/modules/language-school/infrastructure/in-memory-school-repository.js';
+import { InMemoryLeadRepository } from '../src/modules/language-school/infrastructure/in-memory-lead-repository.js';
 
 const unchanged = { goal: null, name: null, contact: null, courseReference: null };
 
@@ -30,6 +34,8 @@ describe('contexto atual do chat escolar', () => {
   const fetch = vi.fn(() => { throw new Error('Rede externa proibida nos testes de contexto.'); });
 
   beforeEach(() => {
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
     vi.stubGlobal('fetch', fetch);
     vi.stubEnv('LANGCHAIN_TRACING_V2', 'false');
     vi.stubEnv('LANGSMITH_TRACING', 'false');
@@ -38,6 +44,9 @@ describe('contexto atual do chat escolar', () => {
   afterEach(async () => {
     await Promise.all(servers.splice(0).map((server) => server.close()));
     expect(fetch).not.toHaveBeenCalled();
+    expect(console.info).not.toHaveBeenCalled();
+    expect(console.error).not.toHaveBeenCalled();
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();
   });
@@ -54,6 +63,52 @@ describe('contexto atual do chat escolar', () => {
       payload: conversationId === undefined ? { message } : { message, conversationId },
     });
   }
+
+  it('consulta catálogo e preços oficiais com goal inferido, sem CHAT_ERROR ou revisão inventada', async () => {
+    const active = courseFixtures.filter((course) => course.active);
+    const model = createJourneyModel([
+      query('get_courses', {}, { goal: 'viagem' }),
+      ...active.map((course) => query('get_course_details', { courseId: course.id },
+        { goal: 'viagem' }, new AIMessage('Todos custam R$ 999.'))),
+    ]);
+    const app = application(model);
+    const catalogResponse = await post(app.server, 'Quais cursos vocês oferecem?');
+    expect(catalogResponse.statusCode).toBe(200);
+    const catalog = languageSchoolChatResponseSchema.parse(catalogResponse.json());
+    const repository = new InMemorySchoolRepository(schoolFixture, courseFixtures);
+    expect(catalog.results).toEqual([{ tool: 'get_courses', result: { ok: true, data: { courses: await repository.listActiveCourses() } } }]);
+    for (const course of active) {
+      const response = await post(app.server, `Qual é o preço de ${course.name}?`, catalog.conversationId);
+      expect(response.statusCode).toBe(200);
+      const body = languageSchoolChatResponseSchema.parse(response.json());
+      expect(body.results).toEqual([{ tool: 'get_course_details', result: { ok: true, data: { course } } }]);
+      expect(body.pendingAction).toBeNull();
+    }
+    expect(app.conversations.get(catalog.conversationId)?.context).toEqual({
+      goal: null, name: null, contact: null, courseId: null, slotId: null, leadId: null, revision: 0,
+    });
+  });
+
+  it('goal inferido não entra na prévia; cadastro só grava após confirmação específica', async () => {
+    const leadRepository = new InMemoryLeadRepository();
+    const model = createJourneyModel([leadTurn({ name: 'Ana', contact: { type: 'email', value: 'ana@example.com' },
+      courseReference: 'inglês', goal: 'viagem' })]);
+    const app = createApplication({}, { model, leadRepository }); servers.push(app.server);
+    const response = await post(app.server, 'Sou Ana, ana@example.com. Quero inglês e me cadastrar.');
+    expect(response.statusCode).toBe(200);
+    const body = languageSchoolChatResponseSchema.parse(response.json());
+    expect(body.results).toMatchObject([{ tool: 'create_lead', result: { ok: false, error: { code: 'CONFIRMATION_REQUIRED' } } }]);
+    expect(body.pendingAction).toMatchObject({ kind: 'create_lead', preview: { goal: null, name: 'Ana' } });
+    expect(await leadRepository.findByConversationId(body.conversationId)).toBeNull();
+    const confirmation = await app.server.inject({ method: 'POST', url: '/api/chat/confirm', payload: {
+      conversationId: body.conversationId, actionId: body.pendingAction!.actionId,
+    } });
+    expect(confirmation.statusCode).toBe(200);
+    expect(languageSchoolChatResponseSchema.parse(confirmation.json()).results).toMatchObject([
+      { tool: 'create_lead', result: { ok: true, data: { outcome: 'created', lead: { goal: null } } } },
+    ]);
+    expect(await leadRepository.findByConversationId(body.conversationId)).toMatchObject({ goal: null, name: 'Ana' });
+  });
 
   it('inicia contexto vazio e mantém os campos internos fora do envelope público', async () => {
     const model = new ScriptedChatModel([new AIMessage('Olá!')]);
@@ -318,11 +373,12 @@ describe('contexto atual do chat escolar', () => {
     expect(visitorHistoryAt(model, 1)).toEqual(['Olá', 'Podemos continuar?']);
   });
 
-  it('rejeita objetivo antigo do histórico depois de uma correção, preservando o estado vigente', async () => {
+  it('descarta objetivo antigo do histórico depois de uma correção, sem abortar o turno', async () => {
     const model = new ScriptedChatModel([
       new AIMessage('Entendi o interesse inicial.'),
       new AIMessage('Agora consideramos entrevistas de emprego.'),
       new AIMessage('Continuamos com entrevistas de emprego.'),
+      new AIMessage('Podemos seguir.'),
     ], { contextSteps: [
       { ...unchanged, goal: 'viagem' },
       { ...unchanged, goal: 'entrevistas de emprego' },
@@ -333,17 +389,17 @@ describe('contexto atual do chat escolar', () => {
     const initial = await post(server, 'Quero estudar para viagem.');
     const { conversationId } = languageSchoolChatResponseSchema.parse(initial.json());
     const correction = await post(server, 'Agora prefiro entrevistas de emprego.', conversationId);
-    const failure = await post(server, 'Pode continuar?', conversationId);
-    const retry = await post(server, 'Podemos seguir?', conversationId);
+    const continued = await post(server, 'Pode continuar?', conversationId);
+    const next = await post(server, 'Podemos seguir?', conversationId);
 
     expect(correction.statusCode).toBe(200);
-    expect(failure.statusCode).toBe(500);
-    expect(chatErrorResponseSchema.parse(failure.json()).error.code).toBe('CHAT_ERROR');
-    expect(retry.statusCode).toBe(200);
+    expect(continued.statusCode).toBe(200);
+    expect(next.statusCode).toBe(200);
     expect(contextAt(model, 1)).toMatchObject({ goal: 'entrevistas de emprego', revision: 2 });
     expect(contextAt(model, 2)).toEqual(contextAt(model, 1));
-    expect(visitorHistoryAt(model, 2)).toEqual([
-      'Quero estudar para viagem.', 'Agora prefiro entrevistas de emprego.', 'Podemos seguir?',
+    expect(contextAt(model, 3)).toEqual(contextAt(model, 1));
+    expect(visitorHistoryAt(model, 3)).toEqual([
+      'Quero estudar para viagem.', 'Agora prefiro entrevistas de emprego.', 'Pode continuar?', 'Podemos seguir?',
     ]);
   });
 

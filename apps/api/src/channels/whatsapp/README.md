@@ -101,13 +101,17 @@ de botões, confirmação, outbox, status e janela geral continuam nas tasks pos
 
 ## Webhook incremental — task 2.2
 
-GET aceita exclusivamente `hub.mode`, `hub.verify_token` e `hub.challenge`, todos
-strings escalares. O modo deve ser `subscribe` e o token deve corresponder a
+GET exige `hub.mode`, `hub.verify_token` e `hub.challenge`, todos strings escalares.
+Aceita esse trio sozinho ou acompanhado dos três aliases `hub_mode`,
+`hub_verify_token` e `hub_challenge`, exclusivamente quando todos correspondem
+exatamente aos valores oficiais. Essa compatibilidade atende ao formato de seis
+parâmetros relatado no ensaio real; não aceita aliases parciais, divergentes ou
+como substitutos do trio oficial. O modo deve ser `subscribe` e o token deve corresponder a
 `META_WEBHOOK_VERIFY_TOKEN`. Sucesso retorna 200 `text/plain; charset=utf-8` com
 o challenge exato após decodificação da query: sem trim, conversão numérica,
 JSON ou newline adicional. Zeros iniciais e whitespace são preservados.
 
-Ausência, repetição, campos extras, challenge vazio ou encoding malformado são
+Ausência, repetição (inclusive de aliases), campos desconhecidos, challenge vazio ou encoding malformado são
 400. Modo/token incorretos em query bem formada produzem o mesmo 403 vazio,
 inclusive token de outro comprimento. O token é comparado como bytes UTF-8,
 usando `timingSafeEqual` somente depois de conferir comprimentos iguais.

@@ -41,6 +41,13 @@ Implementações mantêm cópias defensivas e IDs gerados pelo backend. Lead e h
 
 O mesmo modelo interpreta um patch estruturado. O backend valida schema e fonte antes de aplicar: novos dados pessoais/objetivo devem estar sustentados pela mensagem atual; repetir o valor vigente é no-op. Campos não propostos são preservados. Curso precisa corresponder inequivocamente ao catálogo ativo; associar leadId após confirmação não incrementa revisão.
 
+Um `goal` proposto sem evidência literal é descartado isoladamente, preservando
+o objetivo vigente (ou `null`) e permitindo continuar consultas. Isso não muda
+revisão nem invalida uma prévia por si só. Outras alterações válidas continuam
+aplicáveis; nome/contato novos sem fonte ou patches inválidos pelo schema ainda
+rejeitam o turno inteiro. Objetivos inferidos não podem entrar nos argumentos
+oficiais de cadastro/reserva; as tools continuam comparando com o contexto validado.
+
 [slot-reference.ts](domain/slot-reference.ts) associa data/hora explícitas da mensagem e da evidência a exatamente um slot elegível, no fuso oficial. Aceita data brasileira numérica ou por extenso e hora explícita; não resolve “amanhã”, ordinais ou mensagens com múltiplas opções. O ID proposto deve ser o do slot correspondente: evidência de A não autoriza B. Referência insuficiente/ambígua mantém seleção/revisão. Curso diferente limpa o horário; seleção válida diferente incrementa revisão e invalida ação antiga após commit do turno.
 
 ## Fluxo limitado por turno
