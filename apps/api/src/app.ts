@@ -1,6 +1,7 @@
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import { ChatOpenAI } from '@langchain/openai';
 import { loadWhatsAppConfig } from './channels/whatsapp/config.js';
+import { InMemoryWhatsAppConfirmationReferences } from './channels/whatsapp/confirmation-references.js';
 import { InMemoryWhatsAppConversationBindings } from './channels/whatsapp/conversation-bindings.js';
 import { WhatsAppDemoSessionPolicy } from './channels/whatsapp/demo-session.js';
 import { InMemoryWhatsAppInbox } from './channels/whatsapp/inbox.js';
@@ -126,6 +127,9 @@ export function createApplication(environment: NodeJS.ProcessEnv, options: {
   const whatsappBindings = config.whatsapp.enabled
     ? new InMemoryWhatsAppConversationBindings(conversationService)
     : undefined;
+  const whatsappConfirmationReferences = whatsappBindings
+    ? new InMemoryWhatsAppConfirmationReferences(whatsappBindings)
+    : undefined;
   const whatsappText = config.whatsapp.enabled && whatsappBindings && options.whatsappProcessor !== null
     ? createWhatsAppTextChannel({
       service: conversationService,
@@ -187,5 +191,5 @@ export function createApplication(environment: NodeJS.ProcessEnv, options: {
       return transferToHuman(input, { conversationId, visitorIntent });
     });
 
-  return { server, config, catalogTools, conversations, conversationService, whatsappBindings, whatsappInbox, prepareAction, prepareLead, prepareTrialClass, getAvailableSlots, requestHumanHandoff };
+  return { server, config, catalogTools, conversations, conversationService, whatsappBindings, whatsappConfirmationReferences, whatsappInbox, prepareAction, prepareLead, prepareTrialClass, getAvailableSlots, requestHumanHandoff };
 }
