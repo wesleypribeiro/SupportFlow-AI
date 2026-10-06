@@ -45,8 +45,8 @@ function postEnvelope(server: FastifyInstance, envelope: unknown, signature?: st
     'x-hub-signature-256': signature ?? `sha256=${createHmac('sha256', credentials.appSecret).update(payload).digest('hex')}`,
   } });
 }
-// Composição exclusiva de teste: exercita motor/repositories reais. A ligação
-// produtiva de texto/apresentador e a resolução de referências ficam nas 4.3/5.x.
+// Composição exclusiva de teste para isolar a ordem da inbox sobre o motor real.
+// O processador textual padrão tem sua própria suíte; referências ficam nas 5.x.
 const processText: Processor = async (event, app) => {
   assert(event.type === 'text'); assert(app.whatsappBindings);
   const binding = await app.whatsappBindings.getOrCreate(event);
@@ -60,6 +60,7 @@ function application(script: JourneyScript = [], processor: Processor = processT
   const leadRepository = new InMemoryLeadRepository();
   const process = vi.fn<WhatsAppInboxProcessor<LanguageSchoolChatResponse>>((event) => processor(event, app));
   const app = createApplication(environment, { model, leadRepository, whatsappProcessor: process,
+    whatsappTransport: { send: async () => ({ status: 'accepted', messageId: 'response' }) },
     now: () => new Date('2030-06-10T12:00:00Z'),
     // A segunda mensagem do teste de ordenação tem timestamp anterior à primeira,
     // mas ambas pertencem à execução corrente (política de reinício da task 3.3).
@@ -293,8 +294,8 @@ describe('3.2 — webhook assinado, ACK e processamento gerenciado', () => {
     expect(inbox.admit(inbox.get(key('one'))!.event)).toBe('duplicate');
   });
 
-  it('composição padrão abre sessão vazia sem executar motor ou resolver botão; desabilitada não cria inbox', async () => {
-    const app = createApplication(environment, { whatsappNow: () => new Date('2030-06-10T12:00:00Z') });
+  it('composição de recepção isolada abre sessão vazia sem motor ou botão; desabilitada não cria inbox', async () => {
+    const app = createApplication(environment, { whatsappProcessor: null, whatsappNow: () => new Date('2030-06-10T12:00:00Z') });
     const disabled = createApplication({});
     assert(app.whatsappInbox);
     cleanups.push(async () => { await app.whatsappInbox!.drain(); await app.server.close(); await disabled.server.close(); });

@@ -4,10 +4,10 @@ Esta etapa disponibiliza configuração backend, tipos de transporte e um webhoo
 de validação. `createApplication(environment)` compõe `config.whatsapp` e registra
 GET/POST `/webhooks/whatsapp/meta` somente quando habilitado. Desabilitado, ambos
 retornam 404. Projeta eventos validados e admite mensagens na inbox local antes do
-ACK. A execução usa um processador interno opcional; a composição padrão ainda
-não conecta mensagens ao motor nem envia respostas. Desde a task 3.3, o primeiro
-texto válido abre uma sessão vazia; avisos demonstrativos ficam na inbox e podem
-ser publicados por callback interno injetado.
+ACK. Desde a task 4.3, a composição padrão conecta texto ao serviço compartilhado,
+ao apresentador escolar e ao cliente Cloud API. O primeiro texto válido abre
+a sessão vazia; a resposta/erro fica salva na inbox antes da apresentação.
+Avisos demonstrativos também são enviados pelo transporte composto.
 O core, as sete tools, os contratos públicos e o frontend permanecem independentes.
 
 ## Configuração
@@ -38,11 +38,13 @@ separador; remove-se whitespace externo de cada item. Lista vazia e itens vazios
 (inclusive vírgula final ou repetida) são inválidos. Duplicatas exatas são eliminadas
 preservando a primeira ocorrência e a ordem. O restante de cada ID é preservado,
 sem conversão numérica, normalização de telefone ou extração de dados comerciais.
-A lista retornada é independente do env e congelada.
+A lista retornada é independente do env e congelada. A composição descarta
+mensagens de remetentes não listados antes da inbox, sem abrir sessão ou enviar
+resposta; o webhook reconhece esses itens com ACK.
 
 São exclusivamente participantes autorizados da demonstração. Isso não define
 tenant, autenticação comercial, nome/contact do lead ou vínculo de conversa.
-A aplicação da allowlist a eventos pertence às próximas tasks.
+A allowlist não preenche contexto comercial nem associa sessões web.
 
 ## Transporte interno
 
@@ -50,8 +52,8 @@ A aplicação da allowlist a eventos pertence às próximas tasks.
 `body`) ou mensagem de botões (`type: reply_buttons`, `body`, `buttons` com `id`
 e `title`). São tipos internos readonly, sem modelos escolares, action args ou
 credenciais. A task 4.2 implementa essa fronteira em
-[`meta/cloud-api-client.ts`](meta/cloud-api-client.ts), ainda sem conectá-la ao
-processador da aplicação.
+[`meta/cloud-api-client.ts`](meta/cloud-api-client.ts), conectado à apresentação
+textual pela task 4.3.
 
 O resultado distingue:
 
@@ -94,8 +96,8 @@ A suíte [`whatsapp-cloud-api-client.test.ts`](../../../test/whatsapp-cloud-api-
 usa `fetch` simulado, bloqueia o fetch global e controla timers/Promises. Cobre
 payload/destinatário, limites inclusive Unicode, aceite sem alegar entrega,
 rejeições, respostas inválidas, timeout e falhas tardias, sem chamadas à Meta.
-Conexão ao motor, referências de confirmação, outbox, status e janela geral
-continuam nas tasks posteriores.
+Referências de confirmação, outbox, status e janela geral continuam nas tasks
+posteriores.
 
 ## Webhook incremental — task 2.2
 
@@ -131,8 +133,8 @@ vazio. O handler de erro é local: não retorna corpo recebido, query, assinatur
 segredos ou exceções, nem introduz logs desses dados.
 
 **Desde a task 3.2, o 200 inclui admissão/deduplicação em RAM.** Não significa
-processamento concluído, envio, entrega ou persistência durável. A conexão
-produtiva ao motor/apresentador/transporte permanece nas tasks posteriores.
+processamento concluído, envio, entrega ou persistência durável. Motor,
+apresentador e transporte executam depois do ACK pela fila gerenciada.
 
 O POST recebe somente a fronteira síncrona de admissão da inbox; GET/POST não
 adquirem `runExclusive` nem executam serviço/modelo/repos/ações/transporte.
@@ -204,8 +206,8 @@ comercial ou `conversationId` externo, inclusive para sessões web.
 
 Os testes de vínculo chamam o serviço real diretamente com `ScriptedChatModel`
 e repositories em memória. A inbox da task 3.2 usa a mesma tupla de identidade;
-política de reinício está descrita abaixo, e a conexão produtiva de texto ao motor
-continua posterior.
+política de reinício está descrita abaixo, e a conexão de texto ao motor foi
+adicionada na task 4.3.
 
 ## Inbox e fila local — task 3.2
 
@@ -233,17 +235,17 @@ cópias defensivas. `drain(identity?)` aguarda filas nos testes; `activeQueueCou
 permite verificar remoção das caudas ociosas, mantendo os registros de dedupe.
 
 `createApplication` disponibiliza `whatsappInbox` somente quando habilitado e
-aceita `whatsappProcessor` por composição interna. Sem processador, um texto
-elegível termina em `ignored / PROCESSOR_UNAVAILABLE`, depois da preparação de
-sessão da task 3.3, sem inventar sucesso comercial. Status não entra nessa inbox
-nem chama o processador. Os testes injetam
-o serviço real e transporte simulado para provar ACK, dedupe e ordenação; a
-resolução de botões produtiva não é implementada por esse callback de teste.
+aceita `whatsappProcessor` por composição interna. O padrão é o processador
+textual; `null` isola recepção/sessão sem motor ou apresentação nos testes dessas
+fronteiras, mantendo `ignored / PROCESSOR_UNAVAILABLE`. Um processador injetado
+substitui as decisões, enquanto `whatsappTransport` permite simular o transporte.
+Status não entra nessa inbox nem chama o processador. A resolução de botões
+continua nas tasks 5.x.
 
-Não há conexão produtiva de texto/apresentação (4.3), resolução de referência
-(5.x) ou outbox/recuperação de entrega (6.x) nesta etapa.
-O processador é a fronteira de decisões; envio e estado de entrega deverão ser
-tratados separadamente nas tasks próprias, preservando a resposta salva.
+O callback `onProcessed` recebe uma cópia do registro após salvar o resultado
+ou erro, antes da apresentação/envio. Falha desse callback acrescenta somente
+`presentationError: PRESENTATION_ERROR`, sem apagar a resposta, trocar seu estado
+por falha do motor ou provocar retry. Outbox e recuperação continuam na 6.x.
 
 ## Admissão e reinício demonstrativo — task 3.3
 
@@ -273,8 +275,9 @@ válido pelo contrato de chat abre a conversa vazia pelo serviço compartilhado,
 com defaults oficiais e sem preencher dados de perfil/telefone. Um botão sem
 vínculo resulta em `ignored / SESSION_UNAVAILABLE`, sem chamar processador ou
 abrir conversa. Nenhuma referência antiga reconstrói ação, cadastro ou reserva.
-Texto inicial inválido fica `ignored / INVALID_INITIAL_TEXT`; a orientação
-completa para texto inválido continua no escopo da 4.3.
+Texto inicial inválido fica `ignored / INVALID_INITIAL_TEXT`; a apresentação
+da 4.3 envia orientação sem abrir conversa. Em sessão existente, texto inválido
+faz o processador retornar `ignored / INVALID_TEXT`, preservando contexto e ação.
 
 Avisos de nova sessão e confirmação indisponível são textos fixos em `notice`,
 separados do envelope comercial. O callback opcional `whatsappOnNotice` recebe
@@ -282,9 +285,10 @@ cópias do evento/aviso após salvar o resultado e depois do ACK. A publicação
 exige idade do evento original entre zero (inclusive) e 24 horas (exclusive),
 verificada imediatamente antes do callback. Falha fica em `noticeError` com
 código fixo `NOTICE_ERROR`, sem apagar resultado ou causar retry. O callback
-não comprova entrega; sem ele, o aviso permanece apenas local. Os testes usam
-transporte simulado; cliente Meta, apresentador, outbox e janela geral de envios
-permanecem nas tasks próprias.
+não comprova entrega. Na composição padrão da 4.3, o callback envia texto pelo
+transporte; na composição de recepção isolada, sem callback, o aviso fica local.
+Os testes usam transporte simulado; outbox e janela geral de envios continuam
+nas tasks próprias.
 
 Toda a demonstração continua em RAM e em uma instância. Reiniciar descarta
 conversas, vínculos, dedupe, ações, recibos, leads, reservas e handoffs. Uma nova
@@ -292,6 +296,34 @@ sessão informa que registros anteriores não foram recuperados. Descartar
 mensagens anteriores ao marco sacrifica mensagens atrasadas; não oferece
 deduplicação durável, recuperação comercial ou entrega exatamente uma vez.
 Não utilizar reservas comerciais reais nesta demonstração.
+
+## Texto integrado — task 4.3
+
+`text-channel.ts` valida o texto com `chatRequestSchema`, aparando somente as
+bordas. Texto vazio ou maior que 2.000 caracteres após trim recebe orientação,
+sem truncamento, divisão em turnos ou chamada ao modelo. Texto válido usa o
+vínculo existente e chama diretamente `ConversationService.sendMessage`, sem
+HTTP interno nem aquisição adicional do lock da conversa.
+
+A inbox salva o envelope antes de invocar o apresentador injetado. O módulo
+escolar apresenta results/prévias oficiais; somente diálogo sem ambos utiliza
+`reply`. Prévias são enviadas integralmente como texto, sem botão nesta etapa.
+O histórico original permanece intacto. Erros do motor recebem orientação fixa,
+sem publicar exceções. Cada parte tem uma tentativa; rejeição/indeterminação
+interrompe as demais partes da resposta e mantém o resultado salvo.
+
+O scope interno `previousPresentation` atravessa o serviço/core até o adapter
+escolar. `undefined` mantém a regra web baseada na última resposta do histórico;
+`null` declara ausência de oferta apresentada. O canal passa sempre `null` nesta
+etapa: aceite HTTP, status ainda não correlacionado ou `context.id` externo não
+comprovam apresentação. Pedido explícito de handoff continua funcionando sem
+lead, inclusive com contingência após falha de redação; não confirma nem altera
+por si só a ação pendente. Nenhum contrato HTTP público ganhou esse campo.
+
+Botões/referências (5.x), outbox/`/reenviar`, correlação de entrega e janela geral
+(6.x) permanecem pendentes. O envio ainda é aguardado pela fila do vínculo;
+a separação para permitir correções durante envio lento pertence à 6.1.
+Não há retry automático, evidência de entrega ou recuperação após reinício.
 
 ## Verificação local
 

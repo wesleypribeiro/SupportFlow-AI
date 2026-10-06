@@ -73,8 +73,11 @@ export function createLangChainSchoolTools(catalogTools: ReturnType<typeof creat
       // Mensagens de tools, prosa desta seleção e histórico enviado pelo cliente
       // não autorizam o registro.
       const previous = scope.history.at(-1);
-      const previousReply = previous && AIMessage.isInstance(previous) && !previous.tool_calls?.length
+      const historyReply = previous && AIMessage.isInstance(previous) && !previous.tool_calls?.length
         && typeof previous.content === 'string' ? previous.content : null;
+      // O canal pode declarar ausência explícita de oferta apresentada. Apenas
+      // undefined mantém a regra web; null nunca recai no histórico do modelo.
+      const previousReply = scope.previousPresentation === undefined ? historyReply : scope.previousPresentation;
       const visitorIntent = resolveHandoffIntent(scope.message, previousReply);
       const result = await createTransferToHumanTool(repositories.handoffRepository)(input, {
         conversationId: scope.conversationId, visitorIntent,

@@ -1,5 +1,5 @@
 import type { ChatConfirmationRequest, ChatRequest } from '@supportflow/contracts/chat';
-import type { createChatRunner } from './chat.js';
+import type { createChatRunner, TurnPresentation } from './chat.js';
 import type { InMemoryConversations } from './conversations.js';
 import type { ActionDefinition, ActionExecutor, ActionReceipt, InMemoryPendingActions, PreparedAction } from './pending-actions.js';
 
@@ -12,7 +12,7 @@ export type ConversationServiceResult<Response> =
 export type ConversationService<Response, PendingAction = unknown> = {
   openConversation: () => Promise<ConversationServiceResult<{ conversationId: string }>>;
   getCurrentPendingAction: (request: Pick<ChatConfirmationRequest, 'conversationId'>) => Promise<ConversationServiceResult<{ pendingAction: PendingAction }>>;
-  sendMessage: (request: ChatRequest) => Promise<ConversationServiceResult<Response>>;
+  sendMessage: (request: ChatRequest, presentation?: TurnPresentation) => Promise<ConversationServiceResult<Response>>;
   confirmAction: (request: ChatConfirmationRequest) => Promise<ConversationServiceResult<Response>>;
 };
 
@@ -56,7 +56,7 @@ export function createConversationService<Context extends { revision: number }, 
       }
     },
 
-    async sendMessage({ conversationId, message }) {
+    async sendMessage({ conversationId, message }, presentation) {
       try {
         // create apenas gera o estado inicial; o primeiro turno ainda não foi salvo.
         const initial = conversationId === undefined ? conversations.create() : undefined;
@@ -67,7 +67,7 @@ export function createConversationService<Context extends { revision: number }, 
           // Ler dentro da fila para observar correções anteriores já concluídas.
           const conversation = initial ?? conversations.get(id);
           if (!conversation) return { ok: false, code: 'NOT_FOUND' };
-          const turn = await runTurn(conversation, message);
+          const turn = await runTurn(conversation, message, presentation);
           const staged = turn.actionProposal !== undefined && turn.actionProposal !== null
             ? actions.stage(id, turn.context.revision, turn.actionProposal) : undefined;
           const response = parseResponse({

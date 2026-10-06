@@ -76,6 +76,8 @@ function application(options: { model?: ScriptedChatModel; env?: NodeJS.ProcessE
   const trialClassRepository = new InMemoryTrialClassRepository(slotFixtures);
   const handoffRepository = new InMemoryHandoffRepository();
   const app = createApplication(options.env ?? environment, { model, schoolRepository, leadRepository, trialClassRepository, handoffRepository,
+    // Isola recepção/assinatura; a composição textual padrão é coberta na 4.3.
+    whatsappProcessor: null,
     whatsappNow: () => new Date('2030-06-10T12:00:00Z'),
   });
   // Spies observam implementações reais; nenhum retorno comercial é simulado.

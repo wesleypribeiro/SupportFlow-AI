@@ -6,6 +6,9 @@ import { WhatsAppDemoSessionPolicy } from './channels/whatsapp/demo-session.js';
 import { InMemoryWhatsAppInbox } from './channels/whatsapp/inbox.js';
 import type { WhatsAppInboxOptions, WhatsAppInboxProcessor } from './channels/whatsapp/inbox.js';
 import { registerMetaWebhookRoutes } from './channels/whatsapp/meta/webhook-route.js';
+import { createMetaCloudApiClient } from './channels/whatsapp/meta/cloud-api-client.js';
+import { createWhatsAppTextChannel } from './channels/whatsapp/text-channel.js';
+import type { WhatsAppTransport } from './channels/whatsapp/transport.js';
 import { createLeadResultSchema, languageSchoolChatResponseSchema, scheduleTrialClassResultSchema, transferToHumanResultSchema } from '@supportflow/contracts/language-school';
 import type { LanguageSchoolChatResponse } from '@supportflow/contracts/language-school';
 import { registerChatRoute } from './core/chat-route.js';
@@ -44,6 +47,7 @@ import { createTransferToHumanTool } from './modules/language-school/infrastruct
 import { handoffFailure } from './modules/language-school/application/transfer-to-human.js';
 import type { HandoffScope } from './modules/language-school/application/transfer-to-human.js';
 import { describeHandoffResults } from './modules/language-school/infrastructure/handoff-reply.js';
+import { presentLanguageSchoolWhatsApp } from './modules/language-school/infrastructure/whatsapp-presentation.js';
 
 // Composição explícita: o core não importa nem escolhe o segmento da aplicação.
 export function createApplication(environment: NodeJS.ProcessEnv, options: {
@@ -54,7 +58,9 @@ export function createApplication(environment: NodeJS.ProcessEnv, options: {
   trialClassRepository?: TrialClassRepository;
   handoffRepository?: HandoffRepository;
   now?: () => Date;
-  whatsappProcessor?: WhatsAppInboxProcessor<LanguageSchoolChatResponse>;
+  // null permite compor somente recepção/sessão nos testes dessas fronteiras.
+  whatsappProcessor?: WhatsAppInboxProcessor<LanguageSchoolChatResponse> | null;
+  whatsappTransport?: WhatsAppTransport;
   whatsappNow?: () => Date;
   whatsappInboxLimits?: WhatsAppInboxOptions['limits'];
   whatsappOnNotice?: WhatsAppInboxOptions['onNotice'];
@@ -120,21 +126,34 @@ export function createApplication(environment: NodeJS.ProcessEnv, options: {
   const whatsappBindings = config.whatsapp.enabled
     ? new InMemoryWhatsAppConversationBindings(conversationService)
     : undefined;
+  const whatsappText = config.whatsapp.enabled && whatsappBindings && options.whatsappProcessor !== null
+    ? createWhatsAppTextChannel({
+      service: conversationService,
+      bindings: whatsappBindings,
+      present: presentLanguageSchoolWhatsApp,
+      transport: options.whatsappTransport ?? createMetaCloudApiClient(config.whatsapp, { fetch }),
+    })
+    : undefined;
+  const whatsappOnNotice: WhatsAppInboxOptions['onNotice'] = options.whatsappOnNotice ?? (whatsappText
+    ? (event, notice) => whatsappText.sendText(event.senderId, notice.body)
+    : undefined);
   const whatsappInbox = whatsappBindings
-    ? new InMemoryWhatsAppInbox(options.whatsappProcessor, {
+    ? new InMemoryWhatsAppInbox(options.whatsappProcessor ?? whatsappText?.process, {
       now: options.whatsappNow ?? now,
       sessions: new WhatsAppDemoSessionPolicy(whatsappBindings),
       ...(options.whatsappInboxLimits && { limits: options.whatsappInboxLimits }),
-      ...(options.whatsappOnNotice && { onNotice: options.whatsappOnNotice }),
+      ...(whatsappOnNotice && { onNotice: whatsappOnNotice }),
+      ...(whatsappText && { onProcessed: whatsappText.present }),
     })
     : undefined;
   if (config.whatsapp.enabled) {
+    const recipients = config.whatsapp.demoRecipients;
     registerMetaWebhookRoutes(server, {
       appSecret: config.whatsapp.appSecret,
       webhookVerifyToken: config.whatsapp.webhookVerifyToken,
       wabaId: config.whatsapp.wabaId,
       phoneNumberId: config.whatsapp.phoneNumberId,
-    }, whatsappInbox);
+    }, { admit: (event) => recipients.includes(event.senderId) ? whatsappInbox!.admit(event) : 'accepted' });
   }
 
   // Ponto interno de composição; argumentos não vêm do navegador.
