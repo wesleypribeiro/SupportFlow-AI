@@ -1,5 +1,5 @@
 // Contratos internos de transporte. Não representam entrega nem autorização.
-// Os limites do futuro adapter estão documentados em meta/compatibility.md.
+// O adapter meta/cloud-api-client.ts valida os limites de meta/compatibility.md.
 export type WhatsAppMessage = Readonly<{
   type: 'text';
   body: string;
