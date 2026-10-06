@@ -307,7 +307,8 @@ HTTP interno nem aquisição adicional do lock da conversa.
 
 A inbox salva o envelope antes de invocar o apresentador injetado. O módulo
 escolar apresenta results/prévias oficiais; somente diálogo sem ambos utiliza
-`reply`. Prévias são enviadas integralmente como texto, sem botão nesta etapa.
+`reply`. Na etapa 4.3, prévias eram enviadas integralmente como texto; a
+publicação interativa da 5.2 está descrita abaixo.
 O histórico original permanece intacto. Erros do motor recebem orientação fixa,
 sem publicar exceções. Cada parte tem uma tentativa; rejeição/indeterminação
 interrompe as demais partes da resposta e mantém o resultado salvo.
@@ -320,7 +321,7 @@ comprovam apresentação. Pedido explícito de handoff continua funcionando sem
 lead, inclusive com contingência após falha de redação; não confirma nem altera
 por si só a ação pendente. Nenhum contrato HTTP público ganhou esse campo.
 
-Publicação/confirmação de botões (5.2/5.3), outbox/`/reenviar`, correlação de entrega
+Execução de cliques (5.3), outbox/`/reenviar`, correlação de entrega
 e janela geral (6.x) permanecem pendentes. O envio ainda é aguardado pela fila do vínculo;
 a separação para permitir correções durante envio lento pertence à 6.1.
 Não há retry automático, evidência de entrega ou recuperação após reinício.
@@ -354,13 +355,43 @@ reconstruir argumentos, executar escrita ou exigir que a ação seja a pending a
 Lifecycle, revisão e recibos continuam sob autoridade do serviço compartilhado.
 
 Esta etapa disponibiliza o registro e sua resolução isolada. A publicação após
-commit será conectada na 5.2; construir/validar o comando e chamar `confirmAction`
-a partir do clique pertence à 5.3. O fluxo textual composto continua sem botões.
+commit é conectada na 5.2; construir/validar o comando e chamar `confirmAction`
+a partir do clique pertence à 5.3.
 
 `whatsapp-confirmation-references.test.ts` cobre geração, cópias defensivas,
 aceites identificáveis, correlação exata, isolamento, título sem autoridade,
 interações incompletas e IDs digitados por webhook assinado, com repositories
 reais, ScriptedChatModel e transporte simulado.
+
+## Publicação de confirmações — task 5.2
+
+O canal publica “Confirmar cadastro” ou “Confirmar aula” com o corpo integral
+produzido pelo apresentador escolar. A apresentação ocorre após o serviço
+commitar o turno e a inbox salvar o envelope. Antes do botão, depois das partes
+textuais, `getCurrentPendingAction` relê a ação sob a serialização existente.
+Somente o mesmo vínculo, conversa, `actionId` e `kind` permitem registrar a
+referência e enviar o botão. Prévia substituída recebe orientação de nova revisão;
+prévia acima do limite continua textual, sem referência ou botão incompleto.
+
+A referência é registrada antes do envio e recebe correlação somente com o
+`messageId` aceito pelo transporte. Rejeição, indeterminação ou exceção de envio
+preservam a ação pendente e o envelope, sem autorizar escrita ou retry automático.
+Falha na redação antes do commit não publica referência para a proposta e mantém
+a ação anterior. Mensagem com os mesmos dados, sem nova proposta, preserva ação,
+revisão e referência; novas apresentações acumulam seus IDs aceitos.
+
+Correções de contato/objetivo/slot usam a revisão e o lifecycle existentes.
+Botões antigos permanecem no histórico e suas referências continuam apontando
+para a ação original: o serviço recusa ações stale com `ACTION_STALE`, apresentado
+como orientação para revisar a prévia atual. Texto “sim” continua diálogo e tool
+calls continuam propostas sem autorização. Cadastro e aula têm botões separados.
+
+`whatsapp-confirmation-publication.test.ts` usa webhook assinado, modelo roteirizado,
+repositories reais e transporte simulado. Verifica commit antes de publicação,
+ausência de escrita, continuidade, correções, staging falho, prévia longa e falhas
+de envio. A recusa stale é exercitada pela referência realmente publicada e pela
+confirmação compartilhada; conectar o clique recebido à execução segue na 5.3.
+O processador composto ainda ignora cliques, sem chamar modelo ou confirmação.
 
 ## Verificação local
 

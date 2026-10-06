@@ -10,7 +10,7 @@ import type { WhatsAppMessage } from '../../../channels/whatsapp/transport.js';
 
 export type LanguageSchoolWhatsAppPresentation = {
   messages: Extract<WhatsAppMessage, { type: 'text' }>[];
-  // Apenas conteúdo para futura composição do botão. Não é mensagem enviável,
+  // Apenas conteúdo para composição do botão pelo canal. Não é mensagem enviável,
   // referência interativa, autorização ou evidência de commit/entrega.
   confirmation: (Pick<LanguageSchoolPendingAction, 'actionId' | 'kind'> & {
     body: string;

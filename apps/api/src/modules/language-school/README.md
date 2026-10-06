@@ -103,7 +103,7 @@ O envelope e o histórico do motor permanecem intactos.
 O retorno contém mensagens textuais e, quando couber, `confirmation` com corpo
 completo, título, `actionId` e `kind` da prévia. Esse conteúdo não é um botão
 enviável nem uma autorização: referência opaca, verificação de commit/vínculo e
-publicação pertencem às tasks posteriores. Os títulos são “Confirmar cadastro”
+publicação ficam no canal, conectadas na task 5.2. Os títulos são “Confirmar cadastro”
 e “Confirmar aula”; o corpo distingue a aula experimental demonstrativa.
 
 Texto acima de 4.096 unidades UTF-16 é dividido em partes numeradas, com a
