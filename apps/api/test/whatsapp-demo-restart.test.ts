@@ -52,8 +52,8 @@ function application(options: {
     notices.push(request.message.body);
     return { status: 'accepted' as const, messageId: `notice-${notices.length}` };
   }) };
-  // Somente o harness liga texto ao motor; cliente/apresentador Meta e resolução
-  // de referência não são implementados nesta task.
+  // Este harness isola o reinício/aviso. Sem roteiro, mantém só recepção/sessão;
+  // a composição textual padrão é exercitada em whatsapp-text-channel.test.ts.
   const process = vi.fn(async (input: WhatsAppInboundMessage) => {
     assert(input.type === 'text');
     const binding = app.whatsappBindings!.get(input); assert(binding);
@@ -62,7 +62,8 @@ function application(options: {
   const app = createApplication(environment, {
     model, leadRepository, trialClassRepository, handoffRepository,
     now: () => new Date(start), whatsappNow: options.now ?? (() => new Date(start)),
-    ...(options.script && { whatsappProcessor: process }),
+    whatsappProcessor: options.script ? process : null,
+    whatsappTransport: { send: async () => ({ status: 'accepted', messageId: 'response' }) },
     whatsappOnNotice: options.onNotice ?? (async (input, notice) => {
       await transport.send({ recipientId: input.senderId, message: { type: 'text', body: notice.body } });
     }),

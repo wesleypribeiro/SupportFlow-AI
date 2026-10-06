@@ -6,27 +6,31 @@ import type { WhatsAppDemoSessionPolicy, WhatsAppSessionNotice } from './demo-se
 
 export type WhatsAppInboundMessage = Exclude<WhatsAppEvent, { type: 'status' }>;
 type MessageIdentity = Pick<WhatsAppInboundMessage, 'provider' | 'phoneNumberId' | 'messageId'>;
-export type WhatsAppInboxProcessor<Response> = (event: WhatsAppInboundMessage) => Promise<ConversationServiceResult<Response>>;
+export type WhatsAppInboxProcessor<Response> = (event: WhatsAppInboundMessage) => Promise<
+  ConversationServiceResult<Response> | { ok: false; code: 'INVALID_TEXT' | 'UNSUPPORTED_MESSAGE' }
+>;
 type ProcessingState<Response> =
   | { state: 'received' | 'processing' }
   | { state: 'processed'; response: Response }
   | { state: 'failed'; code: 'NOT_FOUND' | 'ACTION_STALE' | 'CHAT_ERROR' }
-  | { state: 'ignored'; code: 'PROCESSOR_UNAVAILABLE' | 'SESSION_UNAVAILABLE' | 'INVALID_INITIAL_TEXT' };
+  | { state: 'ignored'; code: 'PROCESSOR_UNAVAILABLE' | 'SESSION_UNAVAILABLE' | 'INVALID_INITIAL_TEXT' | 'INVALID_TEXT' | 'UNSUPPORTED_MESSAGE' };
 export type WhatsAppInboxRecord<Response> = {
   event: WhatsAppInboundMessage;
   fingerprint: string;
   notice?: WhatsAppSessionNotice;
   noticeError?: 'NOTICE_ERROR';
+  presentationError?: 'PRESENTATION_ERROR';
 } & ProcessingState<Response>;
 
 // Escolhas locais da demonstração, não limites do provedor. A execução mantém
 // todos os IDs admitidos, inclusive os que falharam ou foram ignorados.
 const DEFAULT_LIMITS = { maxMessages: 10_000, maxWaitingPerSender: 100 };
-export type WhatsAppInboxOptions = {
+export type WhatsAppInboxOptions<Response = unknown> = {
   now?: () => Date;
   limits?: Partial<typeof DEFAULT_LIMITS>;
   sessions?: WhatsAppDemoSessionPolicy;
   onNotice?: (event: WhatsAppInboundMessage, notice: WhatsAppSessionNotice) => Promise<void>;
+  onProcessed?: (record: WhatsAppInboxRecord<Response>) => Promise<void>;
 };
 
 function messageKey(identity: MessageIdentity): string {
@@ -58,7 +62,7 @@ export class InMemoryWhatsAppInbox<Response = unknown> {
   private readonly now: () => Date;
   readonly startedAt: number;
 
-  constructor(private readonly processor?: WhatsAppInboxProcessor<Response>, private readonly options: WhatsAppInboxOptions = {}) {
+  constructor(private readonly processor?: WhatsAppInboxProcessor<Response>, private readonly options: WhatsAppInboxOptions<Response> = {}) {
     this.now = options.now ?? (() => new Date());
     this.startedAt = Math.ceil(this.now().getTime() / 1_000) * 1_000;
     this.limits = { ...DEFAULT_LIMITS, ...options.limits };
@@ -133,14 +137,16 @@ export class InMemoryWhatsAppInbox<Response = unknown> {
     if (session && session.state !== 'ready') {
       this.records.set(key, { ...snapshot, ...session });
     } else if (!this.processor) {
-      // Conexão de texto/apresentação e resolução de botão são tasks posteriores.
+      // Composição de recepção isolada, sem processador de decisões.
       this.records.set(key, { ...snapshot, state: 'ignored', code: 'PROCESSOR_UNAVAILABLE' });
     } else {
       try {
         const result = await this.processor(structuredClone(record.event));
         const outcome: ProcessingState<Response> = result.ok
           ? { state: 'processed', response: structuredClone(result.response) }
-          : { state: 'failed', code: result.code };
+          : result.code === 'INVALID_TEXT' || result.code === 'UNSUPPORTED_MESSAGE'
+            ? { state: 'ignored', code: result.code }
+            : { state: 'failed', code: result.code };
         this.records.set(key, { ...snapshot, ...outcome });
       } catch {
         this.records.set(key, { ...snapshot, state: 'failed', code: 'CHAT_ERROR' });
@@ -151,11 +157,21 @@ export class InMemoryWhatsAppInbox<Response = unknown> {
     // retry aqui. Sua falha nunca apaga a resposta nem repete decisões do motor.
     if (notice && this.options.onNotice) {
       const age = this.now().getTime() - record.event.occurredAt;
-      if (!(age >= 0 && age < 24 * 60 * 60 * 1_000)) return;
+      if (age >= 0 && age < 24 * 60 * 60 * 1_000) {
+        try {
+          await this.options.onNotice(structuredClone(record.event), structuredClone(notice));
+        } catch {
+          this.records.set(key, { ...this.records.get(key)!, noticeError: 'NOTICE_ERROR' });
+        }
+      }
+    }
+    // O envelope/erro já está salvo antes de qualquer formatação/envio. Uma
+    // falha nesta etapa não transforma processamento concluído em CHAT_ERROR.
+    if (this.options.onProcessed) {
       try {
-        await this.options.onNotice(structuredClone(record.event), structuredClone(notice));
+        await this.options.onProcessed(structuredClone(this.records.get(key)!));
       } catch {
-        this.records.set(key, { ...this.records.get(key)!, noticeError: 'NOTICE_ERROR' });
+        this.records.set(key, { ...this.records.get(key)!, presentationError: 'PRESENTATION_ERROR' });
       }
     }
   }

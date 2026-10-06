@@ -3,7 +3,13 @@ import { AIMessage, HumanMessage, SystemMessage } from '@langchain/core/messages
 import type { BaseMessage, ToolCall, ToolMessage } from '@langchain/core/messages';
 import type { Conversation } from './conversations.js';
 
-export type ToolExecutionScope<Context> = {
+export type TurnPresentation = {
+  // undefined usa o histórico; null declara ausência de apresentação anterior.
+  // Fornecido somente pelo adapter interno, nunca pelos argumentos da LLM.
+  previousPresentation?: string | null;
+};
+
+export type ToolExecutionScope<Context> = TurnPresentation & {
   conversationId: string;
   context: Context;
   // Dados do turno mantidos pelo servidor, fora dos argumentos do modelo.
@@ -26,7 +32,7 @@ type ChatComposition<Context> = {
 export function createChatRunner<Context>({
   model, instructions, tools, executeTool, updateContext, describeContext, describeResults,
 }: ChatComposition<Context>) {
-  return async function runTurn(conversation: Conversation<Context>, message: string) {
+  return async function runTurn(conversation: Conversation<Context>, message: string, presentationScope: TurnPresentation = {}) {
     if (!model?.bindTools) {
       throw new Error('Modelo de chat indisponível.');
     }
@@ -57,6 +63,7 @@ export function createChatRunner<Context>({
         context: structuredClone(context),
         message,
         history: [...conversation.history],
+        ...(presentationScope.previousPresentation !== undefined && { previousPresentation: presentationScope.previousPresentation }),
         proposeAction: (proposal) => { actionProposal = structuredClone(proposal); },
       });
       turnHistory.push(output.message);

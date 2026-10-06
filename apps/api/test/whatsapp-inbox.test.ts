@@ -1,13 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { InMemoryWhatsAppInbox } from '../src/channels/whatsapp/inbox.js';
-import type { WhatsAppInboundMessage, WhatsAppInboxProcessor } from '../src/channels/whatsapp/inbox.js';
+import type { WhatsAppInboundMessage, WhatsAppInboxProcessor, WhatsAppInboxRecord } from '../src/channels/whatsapp/inbox.js';
 
 const event: WhatsAppInboundMessage = {
   type: 'text', provider: 'meta', accountId: 'account', phoneNumberId: 'number',
   senderId: 'sender', messageId: 'message', occurredAt: Date.parse('2030-06-10T12:00:00Z'), text: 'Olá!',
 };
 const releases: (() => void)[] = [];
-const inboxes: InMemoryWhatsAppInbox[] = [];
+const inboxes: Pick<InMemoryWhatsAppInbox, 'drain'>[] = [];
 function gate() {
   let release!: () => void;
   const promise = new Promise<void>((resolve) => { release = resolve; });
@@ -25,6 +25,33 @@ afterEach(async () => {
 });
 
 describe('3.2 — admissão atômica e fila local da inbox', () => {
+  it('salva resultado antes da apresentação e isola mutações/falhas do callback, preservando dedupe e fila', async () => {
+    const response = { reply: 'Resultado oficial.' };
+    const process = vi.fn(async () => ({ ok: true as const, response }));
+    let savedAtPresentation: unknown;
+    const present = vi.fn(async (record: WhatsAppInboxRecord<typeof response>): Promise<void> => {
+      savedAtPresentation = store.get(record.event);
+      if (record.state !== 'processed' || record.event.type !== 'text') throw new Error('Resposta de teste inválida.');
+      record.response.reply = 'Resposta adulterada';
+      record.event.text = 'Texto adulterado';
+      throw new Error('PRIVATE_PRESENTER_FAILURE');
+    });
+    const store = new InMemoryWhatsAppInbox(process, { now: () => new Date(event.occurredAt), onProcessed: present });
+    inboxes.push(store);
+    store.admit(event); await store.drain();
+    expect(savedAtPresentation).toMatchObject({ state: 'processed', response: { reply: 'Resultado oficial.' } });
+    expect(response).toEqual({ reply: 'Resultado oficial.' });
+    expect(store.get(event)).toMatchObject({ state: 'processed', response, event, presentationError: 'PRESENTATION_ERROR' });
+    expect(JSON.stringify(store.get(event))).not.toContain('PRIVATE');
+    expect(store.admit(event)).toBe('duplicate'); await store.drain();
+    expect(process).toHaveBeenCalledOnce(); expect(present).toHaveBeenCalledOnce();
+    present.mockResolvedValueOnce(undefined);
+    store.admit({ ...event, messageId: 'next' }); await store.drain();
+    expect(process).toHaveBeenCalledTimes(2); expect(present).toHaveBeenCalledTimes(2);
+    expect(store.get({ ...event, messageId: 'next' })).toMatchObject({ state: 'processed', response });
+    expect(store.activeQueueCount).toBe(0);
+  });
+
   it('registra received sincronamente e deduplica antes, durante e após processar', async () => {
     const entered = gate(); const release = gate();
     const process = vi.fn(async () => {

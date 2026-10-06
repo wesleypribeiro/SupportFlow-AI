@@ -12,6 +12,7 @@ import type { ConversationServiceResult } from '../src/core/conversation-service
 import { InMemoryConversations } from '../src/core/conversations.js';
 import { InMemoryPendingActions } from '../src/core/pending-actions.js';
 import { createConversationContext } from '../src/modules/language-school/domain/conversation-context.js';
+import { handoffOffer } from '../src/modules/language-school/domain/handoff-intent.js';
 import { InMemoryLeadRepository } from '../src/modules/language-school/infrastructure/in-memory-lead-repository.js';
 import { InMemoryTrialClassRepository } from '../src/modules/language-school/infrastructure/in-memory-trial-class-repository.js';
 import { InMemoryHandoffRepository } from '../src/modules/language-school/infrastructure/in-memory-handoff-repository.js';
@@ -75,6 +76,22 @@ describe('ConversationService — extração compatível com a API', () => {
   async function confirm(app: App, body: LanguageSchoolChatResponse) {
     return success(await app.conversationService.confirmAction(confirmation(body)));
   }
+
+  it.each([
+    { previousPresentation: undefined, historyReply: handoffOffer, accepted: true },
+    { previousPresentation: null, historyReply: handoffOffer, accepted: false },
+    { previousPresentation: 'Qual curso deseja?', historyReply: handoffOffer, accepted: false },
+    { previousPresentation: handoffOffer, historyReply: 'Qual curso deseja?', accepted: true },
+  ])('scope interno de apresentação tem precedência, sem reescrever histórico ($accepted, $previousPresentation)', async ({ previousPresentation, historyReply, accepted }) => {
+    const app = application([dialogue(new AIMessage(historyReply)), handoffTurn()]);
+    const first = await send(app, 'Tenho uma dúvida.');
+    const response = success(await app.conversationService.sendMessage({ conversationId: first.conversationId, message: 'Sim, por favor.' },
+      previousPresentation === undefined ? {} : { previousPresentation }));
+    expect(response.results[0]?.result.ok).toBe(accepted);
+    expect(app.conversations.get(first.conversationId)?.history[1]?.text).toBe(historyReply);
+    const request = await app.handoffRepository.findOpenByConversationId(first.conversationId);
+    expect(request !== null).toBe(accepted);
+  });
 
   describe('1.2 — abertura interna e leitura consistente', () => {
     async function open(app: App) {
