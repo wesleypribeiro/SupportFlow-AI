@@ -49,7 +49,9 @@ A aplicação da allowlist a eventos pertence às próximas tasks.
 `WhatsAppTransport.send({ recipientId, message })` recebe texto (`type: text`,
 `body`) ou mensagem de botões (`type: reply_buttons`, `body`, `buttons` com `id`
 e `title`). São tipos internos readonly, sem modelos escolares, action args ou
-credenciais. Não existe implementação HTTP nesta etapa.
+credenciais. A task 4.2 implementa essa fronteira em
+[`meta/cloud-api-client.ts`](meta/cloud-api-client.ts), ainda sem conectá-la ao
+processador da aplicação.
 
 O resultado distingue:
 
@@ -58,8 +60,42 @@ O resultado distingue:
 - `unknown`: timeout, erro de rede ou resposta inválida; não é seguro afirmar
   que o provedor recusou o envio. Não há garantia de exactly-once.
 
-Limites e validação do envio serão aplicados no adapter futuro com `fetch`
-injetável. Nenhum SDK Meta arquivado ou WAHA foi adicionado.
+`createMetaCloudApiClient(config, { fetch, timeoutMs? })` recebe somente a
+configuração backend de envio (`accessToken`, `phoneNumberId`, `graphApiVersion`)
+e exige `fetch` injetado. Não lê env ou rede na construção. Envia um POST para
+`https://graph.facebook.com/v26.0/<phoneNumberId>/messages`, codificando o ID
+como segmento de URL. O Bearer fica exclusivamente no header `Authorization`;
+redirects são recusados. Não há SDK Meta, WAHA ou retry automático.
+
+O request normalizado é validado estritamente antes de qualquer I/O. Texto aceita
+até 4.096 unidades UTF-16, corpo interativo até 1.024, de 1 a 3 botões, título
+até 20 e referência até 256. IDs e títulos dos botões devem ser distintos na
+mensagem. Campos vazios/em branco, extras e tipos incompatíveis são recusados;
+valores válidos são preservados, sem trim, coerção ou truncamento. IDs de
+destinatário/aceite têm limite local de 1.024 unidades e permanecem opacos.
+A divisão de texto pertence ao apresentador; uma chamada envia uma única parte.
+
+O timeout padrão é **10 segundos**, ajustável na composição interna como inteiro
+positivo de até 2.147.483.647 ms. Cobre fetch e leitura do corpo, aborta a tentativa
+e retorna `unknown / timeout` mesmo se o transporte injetado não concluir ao
+receber abort. O timer é liberado ao terminar; respostas tardias não substituem
+o resultado. Erros de rede retornam `unknown / network_error`.
+
+HTTP 2xx só vira `accepted` com produto WhatsApp e exatamente um `messages[].id`
+válido, sem erro conflitante. Extensões de entrega/leitura não constituem
+evidência de entrega. HTTP 4xx/5xx exige um objeto `error` validado para virar
+`rejected`: 401/403 usam `unauthorized`, 429 usa `rate_limited`, demais rejeições
+usam `provider_rejection`. `invalid_request` indica recusa local antes de envio.
+JSON inválido, corpo sem ID, rejeição malformada ou resposta contraditória são
+`unknown / invalid_response`, inclusive erros HTML de proxy. Nenhuma mensagem,
+stack, cause ou payload bruto de erro é retornado ou registrado em log.
+
+A suíte [`whatsapp-cloud-api-client.test.ts`](../../../test/whatsapp-cloud-api-client.test.ts)
+usa `fetch` simulado, bloqueia o fetch global e controla timers/Promises. Cobre
+payload/destinatário, limites inclusive Unicode, aceite sem alegar entrega,
+rejeições, respostas inválidas, timeout e falhas tardias, sem chamadas à Meta.
+Conexão ao motor, referências de confirmação, outbox, status e janela geral
+continuam nas tasks posteriores.
 
 ## Webhook incremental — task 2.2
 

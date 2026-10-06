@@ -96,3 +96,20 @@ developers.facebook.com retornaram 429; o acesso HTTP pelo shell não resolveu
 DNS. Os exemplos Postman confirmam o subset de texto/status, mas não são
 homologação específica da conta/v26.0. A versão fixada permanece v26.0 e a task
 manual 7.4 continua necessária; nenhuma Graph API real foi chamada.
+
+## Cliente de envio — task 4.2 (2026-10-06)
+
+O cliente fixa a v26.0 já verificada na 2.1 e aplica os limites acima, com
+contagem conservadora em UTF-16 coerente com o apresentador. Exemplos de
+[texto](https://www.postman.com/meta/whatsapp-business-platform/request/8gvd47s/send-text-message)
+e [reply buttons](https://www.postman.com/meta/whatsapp-business-platform/request/ne00kt6/send-reply-button)
+do workspace oficial Meta no Postman foram consultados para conferir endpoint,
+Bearer, corpo interativo e resposta com `messages[].id`. Os exemplos são
+parametrizados por versão; não constituem homologação da conta na v26.0.
+
+Nesta consulta, as páginas diretas de texto, botões e erros em
+developers.facebook.com retornaram HTTP 429; o acesso pelo shell não resolveu
+DNS. Mantida a evidência de limites/versão registrada na 2.1. O adapter classifica
+rejeições por categoria local, sem reproduzir uma tabela de códigos Meta ou
+expor erros externos. Resposta não validável permanece indeterminada. Todos os
+testes usam transporte simulado; nenhum envio ou Graph API real foi executado.
