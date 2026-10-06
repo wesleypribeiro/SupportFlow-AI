@@ -325,8 +325,8 @@ comprovam apresentação. Pedido explícito de handoff continua funcionando sem
 lead, inclusive com contingência após falha de redação; não confirma nem altera
 por si só a ação pendente. Nenhum contrato HTTP público ganhou esse campo.
 
-Execução de cliques (5.3), outbox/`/reenviar`, correlação de entrega
-e janela geral (6.x) permanecem pendentes. O envio ainda é aguardado pela fila do vínculo;
+Outbox/`/reenviar`, correlação de entrega e janela geral (6.x) permanecem pendentes.
+O envio ainda é aguardado pela fila do vínculo;
 a separação para permitir correções durante envio lento pertence à 6.1.
 Não há retry automático, evidência de entrega ou recuperação após reinício.
 
@@ -393,9 +393,33 @@ calls continuam propostas sem autorização. Cadastro e aula têm botões separa
 `whatsapp-confirmation-publication.test.ts` usa webhook assinado, modelo roteirizado,
 repositories reais e transporte simulado. Verifica commit antes de publicação,
 ausência de escrita, continuidade, correções, staging falho, prévia longa e falhas
-de envio. A recusa stale é exercitada pela referência realmente publicada e pela
-confirmação compartilhada; conectar o clique recebido à execução segue na 5.3.
-O processador composto ainda ignora cliques, sem chamar modelo ou confirmação.
+de envio. Nessa suíte, a recusa stale é exercitada pela referência realmente
+publicada e pela confirmação compartilhada. A integração do clique está abaixo.
+
+## Execução de confirmações — task 5.3
+
+`text-channel.ts` encaminha `button_reply` ao índice privado de referências.
+Depois de validar vínculo e mensagem da prévia, constrói exclusivamente
+`{ conversationId, actionId }`, valida com `chatConfirmationRequestSchema` e chama
+`ConversationService.confirmAction` diretamente, sob a serialização já existente.
+Referência inválida recebe `NOT_FOUND` e orientação fixa de nova revisão, sem
+chamar modelo/serviço de confirmação ou revelar dados da conversa proprietária.
+
+O canal não consulta a pending atual como condição para confirmar. O lifecycle
+decide revisão/stale e recupera ações concluídas antes de reavaliar o contexto.
+Novo clique válido preserva o recibo original, inclusive `created` e
+`SLOT_UNAVAILABLE`, mesmo após atualizar o lead ou preparar outra ação. A pending
+atual pode ser apresentada junto do recibo, mas não é executada pelo clique antigo.
+Cadastro continua independente de reserva; título e dados externos não trocam
+o tipo ou os argumentos da ação. Duplicata exata permanece a cargo da inbox.
+
+`whatsapp-confirmation-execution.test.ts` usa webhook assinado, ScriptedChatModel,
+repositories reais e transporte simulado. Cobre cadastro created/updated/existing,
+reserva created/existing, disputa atômica de vaga com Promises controladas,
+isolamento, correção antes do clique e recibos históricos com/sem pending atual.
+Falhas de redação/envio preservam o recibo salvo antes da apresentação; outro
+clique recupera esse recibo sem nova escrita ou modelo. Isso não implementa
+outbox, `/reenviar`, status de entrega ou a janela geral das tasks 6.x.
 
 ## Verificação local
 

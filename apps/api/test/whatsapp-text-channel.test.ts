@@ -384,15 +384,16 @@ describe('4.3 — texto por webhook assinado, motor real e apresentação oficia
     expect(await app.leadRepository.findByConversationId(conversationId)).toBeNull();
   });
 
-  it('ignora botões/status/mídia sem confirmação ou turno e restringe texto aos participantes configurados', async () => {
+  it('recusa botão desconhecido, ignora status/mídia e restringe texto aos participantes configurados', async () => {
     const app = application([dialogue()]);
     const confirm = vi.spyOn(app.conversationService, 'confirmAction');
     await app.text('greeting', 'Olá!');
     const calls = app.model.calls.length; const sends = app.sent.length;
     await app.post([metaButton(), metaText({ id: 'media', type: 'image' }), metaText({ id: 'foreign', from: 'unlisted' })], [metaStatus()]);
     await app.inbox.drain();
-    expect(app.inbox.get(key('message-button'))).toMatchObject({ state: 'ignored', code: 'UNSUPPORTED_MESSAGE' });
+    expect(app.inbox.get(key('message-button'))).toMatchObject({ state: 'failed', code: 'NOT_FOUND' });
     expect(app.whatsappBindings!.get({ ...identity, senderId: 'unlisted' })).toBeUndefined();
-    expect(app.model.calls).toHaveLength(calls); expect(app.sent).toHaveLength(sends); expect(confirm).not.toHaveBeenCalled();
+    expect(app.model.calls).toHaveLength(calls); expect(app.sent).toHaveLength(sends + 1); expect(confirm).not.toHaveBeenCalled();
+    expect(app.sent.at(-1)).toMatchObject({ type: 'text', text: { body: expect.stringContaining('revisar a prévia atual') } });
   });
 });

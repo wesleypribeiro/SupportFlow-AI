@@ -1,4 +1,4 @@
-import { chatRequestSchema } from '@supportflow/contracts/chat';
+import { chatConfirmationRequestSchema, chatRequestSchema } from '@supportflow/contracts/chat';
 import type { ConversationService } from '../../core/conversation-service.js';
 import type { InMemoryWhatsAppConfirmationReferences } from './confirmation-references.js';
 import type { InMemoryWhatsAppConversationBindings } from './conversation-bindings.js';
@@ -14,14 +14,24 @@ type TextPresentation = {
 const reviewCurrentPreview = 'Esta prévia não está mais disponível para confirmação. Envie uma mensagem para revisar a prévia atual.';
 
 export function createWhatsAppTextChannel<Response extends { conversationId: string }>(options: {
-  service: Pick<ConversationService<Response, ActionIdentity | null>, 'sendMessage' | 'getCurrentPendingAction'>;
+  service: Pick<ConversationService<Response, ActionIdentity | null>, 'sendMessage' | 'confirmAction' | 'getCurrentPendingAction'>;
   bindings: InMemoryWhatsAppConversationBindings;
   references: InMemoryWhatsAppConfirmationReferences;
   present: (response: Response) => TextPresentation;
   transport: WhatsAppTransport;
 }) {
   const process: WhatsAppInboxProcessor<Response> = async (event) => {
-    if (event.type !== 'text') return { ok: false, code: 'UNSUPPORTED_MESSAGE' };
+    if (event.type === 'button_reply') {
+      const resolved = options.references.resolve(event);
+      if (!resolved.ok) return { ok: false, code: 'NOT_FOUND' };
+      const request = chatConfirmationRequestSchema.parse({
+        conversationId: resolved.target.conversationId,
+        actionId: resolved.target.actionId,
+      });
+      // O lifecycle recupera completed antes de avaliar a revisão. A pending
+      // atual governa somente publicação, nunca a recuperação deste recibo.
+      return options.service.confirmAction(request);
+    }
     const binding = options.bindings.get(event);
     const parsed = chatRequestSchema.safeParse({ message: event.text, conversationId: binding?.conversationId });
     if (!parsed.success) return { ok: false, code: 'INVALID_TEXT' };
@@ -46,7 +56,8 @@ export function createWhatsAppTextChannel<Response extends { conversationId: str
     } else if (record.state === 'ignored' && (record.code === 'INVALID_TEXT' || record.code === 'INVALID_INITIAL_TEXT')) {
       messages = [{ type: 'text', body: 'Envie uma mensagem de texto com 1 a 2.000 caracteres após remover os espaços das bordas. O texto recebido não foi processado nem truncado.' }];
     } else if (record.state === 'failed') {
-      messages = [{ type: 'text', body: record.code === 'ACTION_STALE' ? reviewCurrentPreview
+      messages = [{ type: 'text', body: record.code === 'ACTION_STALE'
+        || (record.code === 'NOT_FOUND' && record.event.type === 'button_reply') ? reviewCurrentPreview
         : 'Não foi possível concluir esta mensagem. Envie uma nova mensagem para continuar.' }];
     }
     // Uma tentativa por parte; falha interrompe o lote, sem repetir o motor.
