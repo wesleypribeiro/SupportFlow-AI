@@ -42,7 +42,10 @@ function application(script: JourneyScript) {
   const leadRepository = new InMemoryLeadRepository();
   const trialClassRepository = new InMemoryTrialClassRepository(slotFixtures, trialClassFixtures);
   const handoffRepository = new InMemoryHandoffRepository();
-  const sent: { to: string; type: string; text: { body: string } }[] = [];
+  const sent: ({ to: string } & (
+    { type: 'text'; text: { body: string } }
+    | { type: 'interactive'; interactive: { body: { text: string }; action: { buttons: { reply: { id: string; title: string } }[] } } }
+  ))[] = [];
   const savedAtSend: (WhatsAppInboxRecord<LanguageSchoolChatResponse> | undefined)[] = [];
   let currentMessage = '';
   const fetch = vi.fn<typeof globalThis.fetch>(async (_url, init) => {
@@ -70,7 +73,7 @@ function application(script: JourneyScript) {
     const start = sent.length;
     expect((await post([metaText({ id: messageId, text: { body }, ...extras })])).statusCode).toBe(200);
     await inbox.drain();
-    return sent.slice(start).map((message) => message.text.body).join('\n\n');
+    return sent.slice(start).map((message) => message.type === 'text' ? message.text.body : message.interactive.body.text).join('\n\n');
   }
   function response(messageId: string) {
     const record = inbox.get(key(messageId)); assert(record?.state === 'processed');
@@ -199,7 +202,9 @@ describe('4.3 — texto por webhook assinado, motor real e apresentação oficia
     expect(app.conversations.get(conversationId)!.context).toEqual(context);
     expect(await app.leadRepository.findByConversationId(conversationId)).toEqual(lead);
     expect(await app.trialClassRepository.findConfirmedBySlotId('slot_english_a')).toBeNull();
-    expect(confirm).not.toHaveBeenCalled(); expect(app.sent.every((message) => message.type === 'text')).toBe(true);
+    expect(confirm).not.toHaveBeenCalled();
+    const latest = app.sent.at(-1); assert(latest?.type === 'interactive');
+    expect(latest.interactive.action.buttons[0]?.reply.title).toBe(kind === 'create_lead' ? 'Confirmar cadastro' : 'Confirmar aula');
   });
 
   it.each(['omitida', 'aceita', 'falhou'] as const)('Sim não aceita oferta %s sem evidência, mesmo com context.id/status externos', async (mode) => {

@@ -130,10 +130,11 @@ export function createApplication(environment: NodeJS.ProcessEnv, options: {
   const whatsappConfirmationReferences = whatsappBindings
     ? new InMemoryWhatsAppConfirmationReferences(whatsappBindings)
     : undefined;
-  const whatsappText = config.whatsapp.enabled && whatsappBindings && options.whatsappProcessor !== null
+  const whatsappText = config.whatsapp.enabled && whatsappBindings && whatsappConfirmationReferences && options.whatsappProcessor !== null
     ? createWhatsAppTextChannel({
       service: conversationService,
       bindings: whatsappBindings,
+      references: whatsappConfirmationReferences,
       present: presentLanguageSchoolWhatsApp,
       transport: options.whatsappTransport ?? createMetaCloudApiClient(config.whatsapp, { fetch }),
     })
