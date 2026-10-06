@@ -96,8 +96,8 @@ A suíte [`whatsapp-cloud-api-client.test.ts`](../../../test/whatsapp-cloud-api-
 usa `fetch` simulado, bloqueia o fetch global e controla timers/Promises. Cobre
 payload/destinatário, limites inclusive Unicode, aceite sem alegar entrega,
 rejeições, respostas inválidas, timeout e falhas tardias, sem chamadas à Meta.
-Referências de confirmação, outbox, status e janela geral continuam nas tasks
-posteriores.
+O registro privado de referências está descrito na task 5.1 abaixo. Publicação
+de botões, confirmação, outbox, status e janela geral continuam nas tasks posteriores.
 
 ## Webhook incremental — task 2.2
 
@@ -320,10 +320,47 @@ comprovam apresentação. Pedido explícito de handoff continua funcionando sem
 lead, inclusive com contingência após falha de redação; não confirma nem altera
 por si só a ação pendente. Nenhum contrato HTTP público ganhou esse campo.
 
-Botões/referências (5.x), outbox/`/reenviar`, correlação de entrega e janela geral
-(6.x) permanecem pendentes. O envio ainda é aguardado pela fila do vínculo;
+Publicação/confirmação de botões (5.2/5.3), outbox/`/reenviar`, correlação de entrega
+e janela geral (6.x) permanecem pendentes. O envio ainda é aguardado pela fila do vínculo;
 a separação para permitir correções durante envio lento pertence à 6.1.
 Não há retry automático, evidência de entrega ou recuperação após reinício.
+
+## Referências privadas — task 5.1
+
+`confirmation-references.ts` mantém o índice em RAM, composto como
+`whatsappConfirmationReferences` somente com o canal habilitado. `getOrCreate`
+recebe vínculo interno existente e identidade de ação oficial (`actionId`,
+`kind`); gera 32 bytes aleatórios criptográficos em base64url. A referência
+não codifica identidade, dados pessoais, argumentos, preview ou IDs internos.
+O registro contém somente referência, vínculo, conversa, actionId, kind e IDs
+de mensagens aceitas. Entradas e leituras são projetadas/copiadas defensivamente.
+Mesma ação/vínculo reutiliza a referência; mudar kind do mesmo actionId é recusado.
+Nenhum registro é removido automaticamente durante a execução.
+
+O registro começa sem mensagens aceitas e não pode ser resolvido nessa condição.
+`recordSendResult` recebe o request e o resultado do transporte backend: somente
+`accepted` com messageId válido, destinatário correspondente e botão contendo
+a referência adiciona esse ID. Texto, outro botão/destinatário, rejected e unknown
+não estabelecem correlação. Vários aceites da mesma prévia são preservados sem
+duplicação; IDs permanecem opacos. Esse registro não comprova entrega.
+
+`resolve` recebe evento já autenticado/projetado e exige `button_reply` completo,
+referência conhecida, vínculo atual com mesma conta/número/remetente/conversa e
+`replyToMessageId` pertencente àquela prévia. Falhas devolvem somente
+`INVALID_CONFIRMATION`, sem dados do proprietário. Título e extensões externas
+continuam descartados pela projeção Meta; texto/IDs/JSON digitados nunca resolvem
+confirmação. O retorno contém apenas o alvo original, sem consultar modelo,
+reconstruir argumentos, executar escrita ou exigir que a ação seja a pending atual.
+Lifecycle, revisão e recibos continuam sob autoridade do serviço compartilhado.
+
+Esta etapa disponibiliza o registro e sua resolução isolada. A publicação após
+commit será conectada na 5.2; construir/validar o comando e chamar `confirmAction`
+a partir do clique pertence à 5.3. O fluxo textual composto continua sem botões.
+
+`whatsapp-confirmation-references.test.ts` cobre geração, cópias defensivas,
+aceites identificáveis, correlação exata, isolamento, título sem autoridade,
+interações incompletas e IDs digitados por webhook assinado, com repositories
+reais, ScriptedChatModel e transporte simulado.
 
 ## Verificação local
 
