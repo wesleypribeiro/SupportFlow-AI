@@ -92,6 +92,17 @@ function expectSafeLogs(lines: string[], extra: string[] = []) {
 }
 
 describe('logs reais e erros sanitizados do webhook', () => {
+  it.each([false, true])('handshake com aliases não publica query/segredos nos logs (divergente: %s)', async (divergent) => {
+    const { inject, lines } = loggedServer();
+    const aliases = new URLSearchParams({ hub_mode: 'subscribe', hub_verify_token: privateData.verifyToken,
+      hub_challenge: divergent ? privateData.body : privateData.challenge }).toString();
+    const response = await inject({ method: 'GET', url: `${path}?${query}&${aliases}` });
+    expect(response.statusCode).toBe(divergent ? 400 : 200);
+    expect(response.body).toBe(divergent ? '' : privateData.challenge);
+    expectSafeLogs(lines, [aliases]);
+    expect(lines.join('')).not.toMatch(/hub_verify_token|hub_challenge/);
+  });
+
   it('preserva o challenge na resposta sem registrar query, headers ou resposta', async () => {
     const { inject, lines } = loggedServer();
     const response = await inject({ method: 'GET', url: `${path}?${query}` });

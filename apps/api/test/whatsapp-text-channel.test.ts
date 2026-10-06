@@ -95,6 +95,92 @@ afterEach(async () => {
 });
 
 describe('4.3 — texto por webhook assinado, motor real e apresentação oficial', () => {
+  it('estabilização: catálogo e preços continuam oficiais quando o modelo infere goal sem evidência', async () => {
+    const active = courseFixtures.filter((course) => course.active);
+    const app = application([query('get_courses', {}, { goal: 'viagem' }),
+      ...active.map((course) => query('get_course_details', { courseId: course.id },
+        { goal: 'viagem' }, new AIMessage('Todos os cursos custam R$ 999.')))]);
+    const output = await app.text('catalog', 'Quais cursos vocês oferecem?');
+    expect(output).toContain('Inglês para viagens');
+    const { conversationId } = app.response('catalog');
+    expect(app.response('catalog').results).toEqual([{ tool: 'get_courses', result: {
+      ok: true, data: { courses: await app.schoolRepository.listActiveCourses() },
+    } }]);
+    const officialPrices = ['R$ 350,00 por mês', 'Preço indisponível (não informado)', 'R$ 0,00'];
+    for (const [index, course] of active.entries()) {
+      const details = await app.text(course.id, `Qual é o preço de ${course.name}?`);
+      expect(details).toContain(officialPrices[index]); expect(details).not.toContain('999');
+      expect(app.response(course.id).results).toEqual([{ tool: 'get_course_details', result: { ok: true, data: { course } } }]);
+      expect(app.response(course.id).pendingAction).toBeNull();
+    }
+    expect(app.conversations.get(conversationId)?.context).toMatchObject({ goal: null, revision: 0, name: null, contact: null, leadId: null });
+    expect(await app.leadRepository.findByConversationId(conversationId)).toBeNull();
+    for (const slot of slotFixtures.filter((slot) => slot.slotId !== 'slot_english_occupied')) {
+      expect(await app.trialClassRepository.findConfirmedBySlotId(slot.slotId)).toBeNull();
+    }
+  });
+
+  it('estabilização: goal inferido mantém ação/revisão; correção explícita substitui prévia sem gravar', async () => {
+    const app = application([
+      leadTurn({ goal: 'viagem', name: 'Ana', contact: { type: 'email', value: 'ana@example.com' }, courseReference: 'inglês' }),
+      query('get_courses', {}, { goal: 'negócios' }),
+      leadTurn({ goal: 'entrevistas' }),
+    ]);
+    await app.text('lead', 'Sou Ana, ana@example.com. Quero inglês para viagem e me cadastrar.');
+    const initial = app.response('lead'); assert(initial.pendingAction?.kind === 'create_lead');
+    const previous = app.conversations.get(initial.conversationId)!.context;
+    await app.text('query', 'Quais cursos vocês oferecem?');
+    expect(app.response('query').pendingAction).toEqual(initial.pendingAction);
+    expect(app.conversations.get(initial.conversationId)!.context).toEqual(previous);
+    expect(await app.conversationService.getCurrentPendingAction({ conversationId: initial.conversationId }))
+      .toEqual({ ok: true, response: { pendingAction: initial.pendingAction } });
+    await app.text('correction', 'Na verdade, quero entrevistas.');
+    const corrected = app.response('correction'); assert(corrected.pendingAction?.kind === 'create_lead');
+    expect(corrected.pendingAction.actionId).not.toBe(initial.pendingAction.actionId);
+    expect(corrected.pendingAction.preview).toEqual({ ...initial.pendingAction.preview, goal: 'entrevistas' });
+    expect(app.conversations.get(initial.conversationId)!.context.revision).toBe(previous.revision + 1);
+    // Exercita somente o lifecycle existente, não a integração de cliques da 5.3.
+    expect(await app.conversationService.confirmAction({ conversationId: initial.conversationId, actionId: initial.pendingAction.actionId }))
+      .toEqual({ ok: false, code: 'ACTION_STALE' });
+    expect(await app.leadRepository.findByConversationId(initial.conversationId)).toBeNull();
+    expect(await app.trialClassRepository.findConfirmedBySlotId('slot_english_a')).toBeNull();
+  });
+
+  it('estabilização: tool não pode usar objetivo inferido para preparar cadastro divergente do contexto', async () => {
+    const app = application([dialogue(new AIMessage('Dados informados.'), {
+      name: 'Ana', contact: { type: 'email', value: 'ana@example.com' }, courseReference: 'inglês',
+    }), query('create_lead', ({ name, contact, courseId }) => ({ name, contact, courseId, goal: 'viagem' }),
+    { goal: 'viagem' }, new AIMessage('Cadastro realizado.'))]);
+    await app.text('data', 'Sou Ana, ana@example.com. Quero inglês.');
+    const output = await app.text('lead', 'Quero me cadastrar.');
+    const response = app.response('lead');
+    expect(response.results).toMatchObject([{ tool: 'create_lead', result: { ok: false, error: { code: 'INVALID_INPUT' } } }]);
+    expect(response.pendingAction).toBeNull();
+    expect(output).not.toContain('Cadastro realizado');
+    expect(app.conversations.get(response.conversationId)?.context).toMatchObject({ goal: null, revision: 1 });
+    expect(await app.leadRepository.findByConversationId(response.conversationId)).toBeNull();
+  });
+
+  it.each([
+    { name: 'Nome Inventado' }, { contact: { type: 'email' as const, value: 'inventado@example.com' } },
+  ])('estabilização: goal ignorado não salva patch pessoal inválido nem invalida ação anterior: %j', async (personal) => {
+    const app = application([
+      leadTurn({ goal: 'viagem', name: 'Ana', contact: { type: 'email', value: 'ana@example.com' }, courseReference: 'inglês' }),
+      dialogue(new AIMessage('Não deve ser chamado.'), { goal: 'negócios', ...personal }),
+    ]);
+    await app.text('lead', 'Sou Ana, ana@example.com. Quero inglês para viagem e me cadastrar.');
+    const initial = app.response('lead');
+    const previous = app.conversations.get(initial.conversationId);
+    const calls = app.model.calls.length;
+    await app.text('invalid', 'Quais cursos vocês oferecem?');
+    expect(app.inbox.get(key('invalid'))).toMatchObject({ state: 'failed', code: 'CHAT_ERROR' });
+    expect(app.conversations.get(initial.conversationId)).toEqual(previous);
+    expect(app.model.calls).toHaveLength(calls);
+    expect(await app.conversationService.getCurrentPendingAction({ conversationId: initial.conversationId }))
+      .toEqual({ ok: true, response: { pendingAction: initial.pendingAction } });
+    expect(await app.leadRepository.findByConversationId(initial.conversationId)).toBeNull();
+  });
+
   it('percorre catálogo → curso → horários; salva envelope antes do envio, preserva prosa no histórico e não reserva', async () => {
     const app = application([catalogTurn(), courseTurn(), slotsTurn()]);
     const states: unknown[] = [];

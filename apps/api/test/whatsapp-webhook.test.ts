@@ -27,6 +27,9 @@ const environment = {
   META_GRAPH_API_VERSION: 'v26.0', WHATSAPP_DEMO_RECIPIENTS: 'demo-recipient',
 };
 const query = { 'hub.mode': 'subscribe', 'hub.verify_token': environment.META_WEBHOOK_VERIFY_TOKEN, 'hub.challenge': '000123' };
+function withAliases(values = query) {
+  return { ...values, hub_mode: values['hub.mode'], hub_verify_token: values['hub.verify_token'], hub_challenge: values['hub.challenge'] };
+}
 const payload = Buffer.from(JSON.stringify(metaEnvelope()), 'utf8');
 function sign(body: Buffer, secret = environment.META_APP_SECRET) {
   return `sha256=${createHmac('sha256', secret).update(body).digest('hex')}`;
@@ -43,6 +46,13 @@ function bodyWithBytes(size: number) {
 }
 
 describe('segurança pura do webhook', () => {
+  it.each(['hub_mode', 'hub_verify_token', 'hub_challenge'])('rejeita alias %s com tipo não escalar', (alias) => {
+    for (const value of [null, 123, [], ['subscribe'], { value: 'subscribe' }]) {
+      expect(verifyWebhookHandshake({ ...withAliases(), [alias]: value }, environment.META_WEBHOOK_VERIFY_TOKEN))
+        .toEqual({ status: 400 });
+    }
+  });
+
   it.each([
     null, [], 'query', {},
     { ...query, 'hub.mode': ['subscribe'] },
@@ -125,6 +135,63 @@ afterEach(async () => {
 });
 
 describe('GET /webhooks/whatsapp/meta', () => {
+  it.each(['000123', ' challenge com espaços ', 'Olá 👋', '+%&='])('aceita aliases completos preservando challenge %j', async (challenge) => {
+    const response = await application().server.inject({ method: 'GET',
+      url: handshakeUrl(withAliases({ ...query, 'hub.challenge': challenge })),
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.headers['content-type']).toBe('text/plain; charset=utf-8');
+    expect(response.rawPayload).toEqual(Buffer.from(challenge));
+  });
+
+  it.each([
+    ['hub_mode'], ['hub_verify_token'], ['hub_challenge'],
+    ['hub_mode', 'hub_verify_token'], ['hub_mode', 'hub_challenge'], ['hub_verify_token', 'hub_challenge'],
+  ])('rejeita subconjunto de aliases: %j', async (...keys) => {
+    const all: Record<string, string> = withAliases();
+    const values = { ...query, ...Object.fromEntries(keys.map((key) => [key, all[key]!])) };
+    const response = await application().server.inject({ method: 'GET', url: handshakeUrl(values) });
+    expect(response.statusCode).toBe(400); expect(response.body).toBe('');
+  });
+
+  it.each(['hub_mode', 'hub_verify_token', 'hub_challenge'])('rejeita alias divergente ou repetido: %s', async (alias) => {
+    const app = application();
+    const all: Record<string, string> = withAliases();
+    for (const value of ['', `${all[alias]} `, 'divergente']) {
+      const response = await app.server.inject({ method: 'GET', url: handshakeUrl({ ...all, [alias]: value }) });
+      expect(response.statusCode).toBe(400); expect(response.body).toBe('');
+    }
+    const duplicate = await app.server.inject({ method: 'GET',
+      url: `${handshakeUrl(all)}&${new URLSearchParams({ [alias]: all[alias]! })}`,
+    });
+    expect(duplicate.statusCode).toBe(400); expect(duplicate.body).toBe('');
+  });
+
+  it.each(['hub.mode', 'hub.verify_token', 'hub.challenge'])('aliases não substituem oficial %s ausente nem toleram repetição', async (field) => {
+    const app = application();
+    const values: Record<string, string> = withAliases();
+    delete values[field];
+    expect((await app.server.inject({ method: 'GET', url: handshakeUrl(values) })).statusCode).toBe(400);
+    const duplicates = `${handshakeUrl(withAliases())}&${new URLSearchParams({ [field]: query[field as keyof typeof query] })}`;
+    expect((await app.server.inject({ method: 'GET', url: duplicates })).statusCode).toBe(400);
+  });
+
+  it.each([
+    `${handshakeUrl(withAliases())}&extra=value`,
+    `${handshakeUrl(withAliases())}&hub_challenge%5B%5D=value`,
+    handshakeUrl({ hub_mode: 'subscribe', hub_verify_token: query['hub.verify_token'], hub_challenge: '000123' }),
+    handshakeUrl(withAliases({ ...query, 'hub.challenge': '' })),
+    handshakeUrl(withAliases()).replace('hub_challenge=000123', 'hub_challenge=%ZZ'),
+  ])('rejeita seis parâmetros com formato incompleto, extra ou malformado (%s)', async (url) => {
+    const response = await application().server.inject({ method: 'GET', url });
+    expect(response.statusCode).toBe(400); expect(response.body).toBe('');
+  });
+
+  it.each([{ 'hub.mode': 'other' }, { 'hub.verify_token': 'other' }])('aliases coerentes ainda exigem token/mode correto: %j', async (change) => {
+    const response = await application().server.inject({ method: 'GET', url: handshakeUrl(withAliases({ ...query, ...change })) });
+    expect(response.statusCode).toBe(403); expect(response.body).toBe('');
+  });
+
   it.each([{}, { WHATSAPP_ENABLED: 'false' }])('não registra GET nem POST quando desabilitado (%j)', async (env) => {
     const app = application({ env });
     expect((await app.server.inject({ method: 'GET', url: handshakeUrl() })).statusCode).toBe(404);
