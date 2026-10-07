@@ -128,8 +128,10 @@ Datas usam o fuso oficial; preços nulos e zero continuam distintos.
 O adapter expõe somente `{ reason }`. `conversationId` e `visitorIntent` são internos.
 O scope opcional `previousPresentation` permite ao canal fornecer a apresentação
 anterior confiável: `null` bloqueia aceitação curta sem oferta; `undefined` mantém
-a regra web pelo histórico. Na task 4.3, o WhatsApp fornece `null` até existir
-correlação de entrega; pedidos explícitos continuam independentes dessa evidência. A operação não exige dados comerciais, não cria/atualiza lead ou booking, nem altera revisão/pendingAction por si só. O repository retorna uma solicitação por conversa, preservando ID, motivo original e `requested` em repetições.
+a regra web pelo histórico. Desde a task 6.2, o WhatsApp fornece somente texto
+efetivamente publicado com evidência de entrega/leitura ou resposta correlacionada
+ao ID aceito; sem evidência, fornece `null`. Pedidos explícitos continuam
+independentes dessa evidência. A operação não exige dados comerciais, não cria/atualiza lead ou booking, nem altera revisão/pendingAction por si só. O repository retorna uma solicitação por conversa, preservando ID, motivo original e `requested` em repetições.
 
 [handoff-reply.ts](infrastructure/handoff-reply.ts) apresenta determinística e explicitamente o registro demonstrativo, sem atendente conectado, notificação externa ou prazo. Resultado oficial validado de registro permite recuperar falha **exclusivamente na redação posterior**, salvando a mensagem de contingência no histórico. Propostas de cadastro/reserva da mesma rodada são descartadas se essa redação falhar; ações anteriores seguem sua revisão. Falhas antes do registro não geram protocolo fictício.
 

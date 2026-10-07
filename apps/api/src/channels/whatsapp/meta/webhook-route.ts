@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import type { WhatsAppConfig } from '../config.js';
+import type { WhatsAppEvent } from '../events.js';
 import { InMemoryWhatsAppInbox } from '../inbox.js';
 import { verifyWebhookHandshake, verifyWebhookSignature } from './webhook-security.js';
 import { projectMetaWebhook } from './webhook-projection.js';
@@ -10,7 +11,8 @@ const WEBHOOK_BODY_LIMIT = 1_048_576;
 type WebhookCredentials = Pick<Extract<WhatsAppConfig, { enabled: true }>, 'appSecret' | 'webhookVerifyToken' | 'wabaId' | 'phoneNumberId'>;
 
 export function registerMetaWebhookRoutes(server: FastifyInstance, credentials: WebhookCredentials,
-  inbox: Pick<InMemoryWhatsAppInbox, 'admit'> = new InMemoryWhatsAppInbox()) {
+  inbox: Pick<InMemoryWhatsAppInbox, 'admit'> = new InMemoryWhatsAppInbox(),
+  onStatus?: (event: Extract<WhatsAppEvent, { type: 'status' }>) => void) {
   server.register(async (webhook) => {
     // Allowlist de campos: nem serializers herdados nem IDs fornecidos pelo
     // visitante podem introduzir URL/query, headers, PII ou exceções nos logs.
@@ -83,7 +85,7 @@ export function registerMetaWebhookRoutes(server: FastifyInstance, credentials: 
       try {
         for (const event of projection.events) {
           // Status não participa da inbox de mensagens nem executa o motor.
-          if (event.type === 'status') continue;
+          if (event.type === 'status') { onStatus?.(event); continue; }
           const admission = inbox.admit(event);
           if (admission === 'collision') collision = true;
           if (admission === 'capacity') capacity = true;

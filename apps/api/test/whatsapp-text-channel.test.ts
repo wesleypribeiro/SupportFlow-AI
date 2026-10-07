@@ -302,8 +302,11 @@ describe('4.3 — texto por webhook assinado, motor real e apresentação oficia
     expect(first.reply).toBe(handoffOffer);
     if (mode === 'omitida') expect(output).not.toContain(handoffOffer);
     if (mode === 'aceita') expect(output).toContain(handoffOffer);
-    await app.post([], [metaStatus({ id: 'outbound-2', status: 'read' })]);
-    await app.text('yes', 'Sim, por favor.', { context: { id: 'outbound-2', previousPresentation: handoffOffer }, previousPresentation: handoffOffer });
+    // IDs desconhecidos continuam sem autoridade. Oferta aceita com entrega ou
+    // resposta realmente correlacionada é coberta positivamente na task 6.2.
+    const unlinkedMessageId = mode === 'aceita' ? 'unknown-outbound' : 'outbound-2';
+    await app.post([], [metaStatus({ id: unlinkedMessageId, status: 'read' })]);
+    await app.text('yes', 'Sim, por favor.', { context: { id: unlinkedMessageId, previousPresentation: handoffOffer }, previousPresentation: handoffOffer });
     expect(app.response('yes').results[0]?.result).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
     expect(await app.handoffRepository.findOpenByConversationId(first.conversationId)).toBeNull();
   });
