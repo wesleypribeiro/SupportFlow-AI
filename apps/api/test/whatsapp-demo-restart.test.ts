@@ -89,7 +89,7 @@ describe('3.3 — marco de início e sessões demonstrativas perdidas', () => {
     vi.unstubAllGlobals(); vi.unstubAllEnvs();
   });
 
-  it.each([0, 1, 999])('captura o clock uma vez, arredonda para cima (%s ms) e admite exatamente no marco', async (fraction) => {
+  it.each([0, 1, 999])('fixa o marco arredondado (%s ms), mesmo consultando o clock na admissão', async (fraction) => {
     let current = start + fraction;
     const clock = vi.fn(() => new Date(current));
     const process = vi.fn(async () => ({ ok: true as const, response: 'ok' }));
@@ -103,7 +103,7 @@ describe('3.3 — marco de início e sessões demonstrativas perdidas', () => {
     expect(inbox.get(event)).toBeUndefined(); expect(inbox.activeQueueCount).toBe(0);
     expect(inbox.admit({ ...event, occurredAt: expected })).toBe('accepted');
     await inbox.drain();
-    expect(process).toHaveBeenCalledOnce(); expect(clock).toHaveBeenCalledOnce();
+    expect(process).toHaveBeenCalledOnce(); expect(clock).toHaveBeenCalledTimes(2);
     expect(inbox.startedAt).toBe(expected);
   });
 
@@ -116,7 +116,8 @@ describe('3.3 — marco de início e sessões demonstrativas perdidas', () => {
     const lines: string[] = [];
     const server = Fastify({ logger: { stream: { write: (line) => { lines.push(line); } } } });
     const process = vi.fn(async () => ({ ok: true as const, response: 'ok' }));
-    const inbox = new InMemoryWhatsAppInbox(process, { now: () => new Date(start + 1), limits: { maxMessages: 1 } });
+    let current = start + 1;
+    const inbox = new InMemoryWhatsAppInbox(process, { now: () => new Date(current), limits: { maxMessages: 1 } });
     registerMetaWebhookRoutes(server, credentials, inbox);
     cleanups.push(async () => { await inbox.drain(); await server.close(); });
     const old = [metaText({ id: 'PRIVATE_ID', from: 'PRIVATE_SENDER', text: { body: 'PRIVATE_BODY' } }),
@@ -129,6 +130,7 @@ describe('3.3 — marco de início e sessões demonstrativas perdidas', () => {
     const logs = lines.map((line) => JSON.parse(line));
     expect(logs.filter((line) => line.code === 'WHATSAPP_BEFORE_START_IGNORED').map((line) => line.count)).toEqual([2, 2]);
     expect(lines.join('')).not.toContain('PRIVATE');
+    current = start + 1_000; // A mensagem no marco já ocorreu no clock do canal.
     expect((await post(server, [metaText({ timestamp: '1907323201' })])).statusCode).toBe(200);
     await inbox.drain(); expect(process).toHaveBeenCalledOnce();
   });

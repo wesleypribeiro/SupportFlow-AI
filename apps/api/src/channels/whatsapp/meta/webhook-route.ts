@@ -82,6 +82,7 @@ export function registerMetaWebhookRoutes(server: FastifyInstance, credentials: 
       let collision = false;
       let capacity = false;
       let beforeStart = 0;
+      let futureTimestamp = 0;
       try {
         for (const event of projection.events) {
           // Status não participa da inbox de mensagens nem executa o motor.
@@ -90,6 +91,7 @@ export function registerMetaWebhookRoutes(server: FastifyInstance, credentials: 
           if (admission === 'collision') collision = true;
           if (admission === 'capacity') capacity = true;
           if (admission === 'before_start') beforeStart += 1;
+          if (admission === 'future_timestamp') futureTimestamp += 1;
         }
       } catch {
         // Admissões anteriores do lote ficam deduplicáveis em uma reentrega.
@@ -97,6 +99,9 @@ export function registerMetaWebhookRoutes(server: FastifyInstance, credentials: 
       }
       if (beforeStart > 0) {
         request.log.info({ code: 'WHATSAPP_BEFORE_START_IGNORED', count: beforeStart });
+      }
+      if (futureTimestamp > 0) {
+        request.log.info({ code: 'WHATSAPP_FUTURE_TIMESTAMP_IGNORED', count: futureTimestamp });
       }
       if (capacity) return reply.code(503).send();
       if (collision) {
