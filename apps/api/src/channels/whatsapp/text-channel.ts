@@ -5,6 +5,7 @@ import type { InMemoryWhatsAppConversationBindings } from './conversation-bindin
 import type { WhatsAppInboxProcessor, WhatsAppInboxRecord } from './inbox.js';
 import { InMemoryWhatsAppOutbox, reviewCurrentPreview } from './outbox.js';
 import type { WhatsAppTextPresentation } from './outbox.js';
+import type { InMemoryWhatsAppServiceWindow } from './service-window.js';
 import type { WhatsAppMessage, WhatsAppTransport } from './transport.js';
 
 type TextMessage = Extract<WhatsAppMessage, { type: 'text' }>;
@@ -16,6 +17,7 @@ export function createWhatsAppTextChannel<Response extends { conversationId: str
   references: InMemoryWhatsAppConfirmationReferences;
   present: (response: Response) => WhatsAppTextPresentation;
   transport: WhatsAppTransport;
+  serviceWindow: InMemoryWhatsAppServiceWindow;
   now?: () => Date;
 }) {
   const outbox = new InMemoryWhatsAppOutbox<Response>(options);

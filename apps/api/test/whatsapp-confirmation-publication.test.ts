@@ -4,6 +4,7 @@ import { AIMessage } from '@langchain/core/messages';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApplication } from '../src/app.js';
 import { createWhatsAppTextChannel } from '../src/channels/whatsapp/text-channel.js';
+import { InMemoryWhatsAppServiceWindow } from '../src/channels/whatsapp/service-window.js';
 import type { WhatsAppSendRequest, WhatsAppTransport } from '../src/channels/whatsapp/transport.js';
 import { InMemoryLeadRepository } from '../src/modules/language-school/infrastructure/in-memory-lead-repository.js';
 import { InMemoryTrialClassRepository } from '../src/modules/language-school/infrastructure/in-memory-trial-class-repository.js';
@@ -119,8 +120,10 @@ async function rejectStale(app: App, publication: ReturnType<typeof button>) {
   const result = await app.conversationService.confirmAction({ conversationId: resolved.target.conversationId, actionId: resolved.target.actionId });
   expect(result).toEqual({ ok: false, code: 'ACTION_STALE' });
   assert(!result.ok);
+  const serviceWindow = new InMemoryWhatsAppServiceWindow(now);
+  expect(serviceWindow.admit(event)).toBe(true);
   const channel = createWhatsAppTextChannel({ service: app.conversationService, bindings: app.whatsappBindings!,
-    references: app.references, present: presentLanguageSchoolWhatsApp, transport: { send: app.send } });
+    references: app.references, present: presentLanguageSchoolWhatsApp, transport: { send: app.send }, serviceWindow, now });
   const start = app.sent.length;
   await channel.present({ event, fingerprint: 'test', state: 'failed', code: result.code });
   expect(output(app.sent.slice(start))).toContain('revisar a prévia atual');

@@ -14,11 +14,11 @@ O core, as sete tools, os contratos públicos e o frontend permanecem independen
 
 `outbox.ts` mantém snapshots do resultado/erro salvo na inbox e das partes de
 apresentação. Cada parte distingue `pending`, `sending`, `accepted`, `failed`,
-`unknown` e `superseded`; `accepted` registra o ID retornado pelo transporte e
+`unknown`, `blocked_window` e `superseded`; `accepted` registra o ID retornado pelo transporte e
 não comprova entrega. A outbox não substitui os recibos do lifecycle.
 
-O comando de canal **exato** `/reenviar` recupera a última resposta com falha ou
-envio indeterminado do próprio vínculo/conversa, sem chamar modelo, tools ou
+O comando de canal **exato** `/reenviar` recupera a última resposta com falha,
+envio indeterminado ou bloqueio de janela do próprio vínculo/conversa, sem chamar modelo, tools ou
 confirmação. Só tenta partes ainda não aceitas e preserva conteúdo/numeração.
 Uma falha interrompe o restante do lote; não há retry automático. Se a tentativa
 anterior ficou `unknown`, o mesmo texto pode aparecer duas vezes no WhatsApp:
@@ -37,8 +37,8 @@ A fila da outbox serializa somente I/O por destinatário. A inbox acompanha as
 Promises de apresentação e captura suas falhas, mas libera o processamento de
 novas correções/cliques sem aguardar transporte lento. `whatsappInbox.drain()`
 aguarda processamento e apresentações nos testes; caudas ociosas são removidas.
-Todo estado é local, volátil e limitado a uma instância. A janela geral por
-parte/reenvio continua na task 6.3.
+Todo estado é local, volátil e limitado a uma instância. A janela por parte/reenvio
+está descrita na task 6.3 abaixo.
 
 ## Status e evidência de apresentação — task 6.2
 
@@ -73,6 +73,31 @@ e a regra web permanece baseada no histórico. Nenhum contrato público mudou.
 isolamento, corrida com HTTP, limites/expiração, recibo de reserva preservado,
 reenvio e aceitação/rejeição de oferta usando repositories reais, webhook
 assinado, modelo roteirizado e Promises controladas, sem serviços externos.
+
+## Janela de atendimento — task 6.3
+
+`service-window.ts` compartilha entre inbox/outbox o maior timestamp original de
+texto/botão autenticado, projetado e admitido por identidade completa do canal.
+Somente novas admissões atualizam essa evidência: duplicatas, colisões, eventos
+anteriores ao início, recusas de capacidade, status e saídas não renovam a janela.
+Timestamp à frente do clock `whatsappNow` é descartado sem turno/conversa, com
+ACK e contagem sanitizada `WHATSAPP_FUTURE_TIMESTAMP_IGNORED`; o MVP não aplica
+tolerância a timestamps futuros. Mensagens atrasadas não reduzem o máximo.
+
+Cada parte de texto/botão, aviso e reenvio consulta o clock antes do transporte,
+inclusive depois de aguardar a leitura da prévia. Com idade de 24 horas ou mais,
+a parte fica `blocked_window` e interrompe o lote sem enviar texto ou template.
+Partes aceitas e snapshots de resultado/evento permanecem intactos. Uma nova
+mensagem pode renovar a janela; `/reenviar` recupera explicitamente as partes
+elegíveis sem executar modelo, confirmar ação ou escrever novamente o negócio.
+O próprio comando novo é texto recebido, mas sua reentrega não renova a janela.
+Nenhum retry substitui o timestamp original guardado na inbox/outbox.
+
+`whatsapp-service-window.test.ts` cobre os limites antes/exatamente/depois de
+24 horas, atrasos do modelo/fila/prévia, expiração entre partes e em reenvios,
+isolamento, reentregas, futuro, renovação por texto/botão e recuperação de recibo
+com repositories reais e transporte simulado. O clock comercial permanece
+independente do clock do canal.
 
 ## Configuração
 
@@ -350,13 +375,13 @@ faz o processador retornar `ignored / INVALID_TEXT`, preservando contexto e aç�
 Avisos de nova sessão e confirmação indisponível são textos fixos em `notice`,
 separados do envelope comercial. O callback opcional `whatsappOnNotice` recebe
 cópias do evento/aviso após salvar o resultado e depois do ACK. A publicação
-exige idade do evento original entre zero (inclusive) e 24 horas (exclusive),
-verificada imediatamente antes do callback. Falha fica em `noticeError` com
+exige janela aberta pela última mensagem admitida, verificada imediatamente
+antes do callback e novamente pela outbox antes do transporte. Falha fica em `noticeError` com
 código fixo `NOTICE_ERROR`, sem apagar resultado ou causar retry. O callback
 não comprova entrega. Na composição padrão da 4.3, o callback envia texto pelo
 transporte; na composição de recepção isolada, sem callback, o aviso fica local.
-Os testes usam transporte simulado; outbox e janela geral de envios continuam
-nas tasks próprias.
+Os testes usam transporte simulado; outbox e janela geral de envios estão
+descritas nas tasks 6.1 e 6.3 acima.
 
 Toda a demonstração continua em RAM e em uma instância. Reiniciar descarta
 conversas, vínculos, dedupe, ações, recibos, leads, reservas e handoffs. Uma nova

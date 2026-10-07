@@ -56,6 +56,7 @@ const processText: Processor = async (event, app) => {
   }));
 };
 function application(script: JourneyScript = [], processor: Processor = processText) {
+  let clock = Date.parse('2030-06-10T11:59:58Z');
   const model = createJourneyModel(script);
   const leadRepository = new InMemoryLeadRepository();
   const process = vi.fn<WhatsAppInboxProcessor<LanguageSchoolChatResponse>>((event) => processor(event, app));
@@ -64,8 +65,9 @@ function application(script: JourneyScript = [], processor: Processor = processT
     now: () => new Date('2030-06-10T12:00:00Z'),
     // A segunda mensagem do teste de ordenação tem timestamp anterior à primeira,
     // mas ambas pertencem à execução corrente (política de reinício da task 3.3).
-    whatsappNow: () => new Date('2030-06-10T11:59:58Z'),
+    whatsappNow: () => new Date(clock),
   });
+  clock = Date.parse('2030-06-10T12:00:00Z'); // Ambas já ocorreram ao serem admitidas.
   assert(app.whatsappInbox); assert(app.whatsappBindings);
   const inbox = app.whatsappInbox;
   cleanups.push(async () => { await inbox.drain(); await app.server.close(); });

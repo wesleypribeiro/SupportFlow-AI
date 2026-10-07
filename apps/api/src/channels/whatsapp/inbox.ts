@@ -3,6 +3,7 @@ import type { ConversationServiceResult } from '../../core/conversation-service.
 import type { WhatsAppConversationIdentity } from './conversation-bindings.js';
 import type { WhatsAppEvent } from './events.js';
 import type { WhatsAppDemoSessionPolicy, WhatsAppSessionNotice } from './demo-session.js';
+import { InMemoryWhatsAppServiceWindow } from './service-window.js';
 
 export type WhatsAppInboundMessage = Exclude<WhatsAppEvent, { type: 'status' }>;
 type MessageIdentity = Pick<WhatsAppInboundMessage, 'provider' | 'phoneNumberId' | 'messageId'>;
@@ -27,6 +28,7 @@ export type WhatsAppInboxRecord<Response> = {
 const DEFAULT_LIMITS = { maxMessages: 10_000, maxWaitingPerSender: 100 };
 export type WhatsAppInboxOptions<Response = unknown> = {
   now?: () => Date;
+  serviceWindow?: InMemoryWhatsAppServiceWindow;
   limits?: Partial<typeof DEFAULT_LIMITS>;
   sessions?: WhatsAppDemoSessionPolicy;
   onNotice?: (event: WhatsAppInboundMessage, notice: WhatsAppSessionNotice) => Promise<void>;
@@ -60,12 +62,13 @@ export class InMemoryWhatsAppInbox<Response = unknown> {
   private readonly presentations = new Map<string, Set<Promise<void>>>();
   private readonly waiting = new Map<string, number>();
   private readonly limits: typeof DEFAULT_LIMITS;
-  private readonly now: () => Date;
+  private readonly serviceWindow: InMemoryWhatsAppServiceWindow;
   readonly startedAt: number;
 
   constructor(private readonly processor?: WhatsAppInboxProcessor<Response>, private readonly options: WhatsAppInboxOptions<Response> = {}) {
-    this.now = options.now ?? (() => new Date());
-    this.startedAt = Math.ceil(this.now().getTime() / 1_000) * 1_000;
+    const now = options.now ?? (() => new Date());
+    this.serviceWindow = options.serviceWindow ?? new InMemoryWhatsAppServiceWindow(now);
+    this.startedAt = Math.ceil(now().getTime() / 1_000) * 1_000;
     this.limits = { ...DEFAULT_LIMITS, ...options.limits };
     if (!Number.isFinite(this.startedAt) || Object.values(this.limits).some((limit) => !Number.isSafeInteger(limit) || limit < 1)) {
       throw new Error('Configuração inválida da inbox WhatsApp.');
@@ -79,7 +82,7 @@ export class InMemoryWhatsAppInbox<Response = unknown> {
     return record && structuredClone(record);
   }
 
-  admit(event: WhatsAppInboundMessage): 'accepted' | 'duplicate' | 'collision' | 'capacity' | 'before_start' {
+  admit(event: WhatsAppInboundMessage): 'accepted' | 'duplicate' | 'collision' | 'capacity' | 'before_start' | 'future_timestamp' {
     const key = messageKey(event);
     const digest = fingerprint(event);
     const existing = this.records.get(key);
@@ -90,6 +93,7 @@ export class InMemoryWhatsAppInbox<Response = unknown> {
     const identity = bindingKey(event);
     const waiting = this.waiting.get(identity) ?? 0;
     if (this.records.size >= this.limits.maxMessages || waiting >= this.limits.maxWaitingPerSender) return 'capacity';
+    if (!this.serviceWindow.admit(event)) return 'future_timestamp';
 
     // Sem await entre lookup, received e reserva da fila: admissão indivisível
     // neste processo. Nenhum modelo, abertura de conversa ou rede neste trecho.
@@ -159,8 +163,7 @@ export class InMemoryWhatsAppInbox<Response = unknown> {
     // O callback interno permitirá compor o transporte; não há cliente Meta ou
     // retry aqui. Sua falha nunca apaga a resposta nem repete decisões do motor.
     if (notice && this.options.onNotice) {
-      const age = this.now().getTime() - record.event.occurredAt;
-      if (age >= 0 && age < 24 * 60 * 60 * 1_000) {
+      if (this.serviceWindow.isOpen(record.event)) {
         this.trackPresentation(key, record.event, 'noticeError', async () => {
           await this.options.onNotice!(structuredClone(record.event), structuredClone(notice));
         });

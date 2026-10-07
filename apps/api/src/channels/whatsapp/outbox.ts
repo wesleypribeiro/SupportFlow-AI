@@ -4,6 +4,7 @@ import type { InMemoryWhatsAppConversationBindings, WhatsAppConversationBinding,
 import { whatsappIdSchema } from './events.js';
 import type { WhatsAppEvent } from './events.js';
 import type { WhatsAppInboundMessage, WhatsAppInboxRecord } from './inbox.js';
+import type { InMemoryWhatsAppServiceWindow } from './service-window.js';
 import type { WhatsAppMessage, WhatsAppSendRequest, WhatsAppSendResult, WhatsAppTransport } from './transport.js';
 
 type ActionIdentity = { actionId: string; kind: string };
@@ -17,7 +18,7 @@ type StatusEvent = Extract<WhatsAppEvent, { type: 'status' }>;
 type Delivery = { messageId: string; evidence: Partial<Record<StatusEvent['status'], number>> };
 export type WhatsAppOutboxPart = {
   content: Content;
-  state: 'pending' | 'sending' | 'accepted' | 'sent' | 'delivered' | 'read' | 'failed' | 'unknown' | 'superseded';
+  state: 'pending' | 'sending' | 'accepted' | 'sent' | 'delivered' | 'read' | 'failed' | 'unknown' | 'blocked_window' | 'superseded';
   request?: WhatsAppSendRequest;
   result?: WhatsAppSendResult;
   deliveries?: Delivery[];
@@ -70,6 +71,7 @@ export class InMemoryWhatsAppOutbox<Response extends { conversationId: string }>
     bindings: InMemoryWhatsAppConversationBindings;
     references: InMemoryWhatsAppConfirmationReferences;
     transport: WhatsAppTransport;
+    serviceWindow: InMemoryWhatsAppServiceWindow;
     now?: () => Date;
   }) {}
 
@@ -168,7 +170,7 @@ export class InMemoryWhatsAppOutbox<Response extends { conversationId: string }>
       const record = binding && [...this.records.values()].reverse().find((candidate) =>
         candidate.source && candidate.binding?.conversationId === binding.conversationId
         && recipientKey(candidate.event) === recipientKey(event)
-        && candidate.parts.some((part) => part.state === 'failed' || part.state === 'unknown'));
+        && candidate.parts.some((part) => part.state === 'failed' || part.state === 'unknown' || part.state === 'blocked_window'));
       if (!record) {
         const notice = this.save(event, 'recovery_notice', [{ type: 'text', body: noRecoverableResponse }]);
         if (notice) await this.attempt(notice);
@@ -204,6 +206,10 @@ export class InMemoryWhatsAppOutbox<Response extends { conversationId: string }>
   private async attempt(record: WhatsAppOutboxRecord<Response>): Promise<void> {
     for (const part of record.parts) {
       if (hasAcceptedState(part) || part.state === 'superseded') continue;
+      if (!this.options.serviceWindow.isOpen(record.event)) {
+        part.state = 'blocked_window';
+        return;
+      }
       let request: WhatsAppSendRequest;
       let reference: string | undefined;
       try {
@@ -231,6 +237,12 @@ export class InMemoryWhatsAppOutbox<Response extends { conversationId: string }>
       } catch {
         part.state = 'failed';
         throw new Error('Apresentação WhatsApp indisponível.');
+      }
+      // A leitura da prévia pode aguardar o serviço. Checar novamente antes do
+      // I/O; nunca substituir o evento original pela hora de envio ou de retry.
+      if (!this.options.serviceWindow.isOpen(record.event)) {
+        part.state = 'blocked_window';
+        return;
       }
       part.request = structuredClone(request);
       part.state = 'sending';

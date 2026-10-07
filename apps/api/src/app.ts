@@ -9,6 +9,7 @@ import type { WhatsAppInboxOptions, WhatsAppInboxProcessor } from './channels/wh
 import { registerMetaWebhookRoutes } from './channels/whatsapp/meta/webhook-route.js';
 import { createMetaCloudApiClient } from './channels/whatsapp/meta/cloud-api-client.js';
 import { createWhatsAppTextChannel } from './channels/whatsapp/text-channel.js';
+import { InMemoryWhatsAppServiceWindow } from './channels/whatsapp/service-window.js';
 import type { WhatsAppTransport } from './channels/whatsapp/transport.js';
 import { createLeadResultSchema, languageSchoolChatResponseSchema, scheduleTrialClassResultSchema, transferToHumanResultSchema } from '@supportflow/contracts/language-school';
 import type { LanguageSchoolChatResponse } from '@supportflow/contracts/language-school';
@@ -130,6 +131,7 @@ export function createApplication(environment: NodeJS.ProcessEnv, options: {
   const whatsappConfirmationReferences = whatsappBindings
     ? new InMemoryWhatsAppConfirmationReferences(whatsappBindings)
     : undefined;
+  const whatsappServiceWindow = new InMemoryWhatsAppServiceWindow(options.whatsappNow ?? now);
   const whatsappText = config.whatsapp.enabled && whatsappBindings && whatsappConfirmationReferences && options.whatsappProcessor !== null
     ? createWhatsAppTextChannel({
       service: conversationService,
@@ -137,6 +139,7 @@ export function createApplication(environment: NodeJS.ProcessEnv, options: {
       references: whatsappConfirmationReferences,
       present: presentLanguageSchoolWhatsApp,
       transport: options.whatsappTransport ?? createMetaCloudApiClient(config.whatsapp, { fetch }),
+      serviceWindow: whatsappServiceWindow,
       now: options.whatsappNow ?? now,
     })
     : undefined;
@@ -147,6 +150,7 @@ export function createApplication(environment: NodeJS.ProcessEnv, options: {
     ? new InMemoryWhatsAppInbox(options.whatsappProcessor ?? whatsappText?.process, {
       now: options.whatsappNow ?? now,
       sessions: new WhatsAppDemoSessionPolicy(whatsappBindings),
+      serviceWindow: whatsappServiceWindow,
       ...(options.whatsappInboxLimits && { limits: options.whatsappInboxLimits }),
       ...(whatsappOnNotice && { onNotice: whatsappOnNotice }),
       ...(whatsappText && { onProcessed: whatsappText.present }),
