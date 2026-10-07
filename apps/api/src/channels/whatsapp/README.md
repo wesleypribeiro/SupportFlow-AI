@@ -10,6 +10,36 @@ a sessão vazia; a resposta/erro fica salva na inbox antes da apresentação.
 Avisos demonstrativos também são enviados pelo transporte composto.
 O core, as sete tools, os contratos públicos e o frontend permanecem independentes.
 
+## Outbox e recuperação explícita — task 6.1
+
+`outbox.ts` mantém snapshots do resultado/erro salvo na inbox e das partes de
+apresentação. Cada parte distingue `pending`, `sending`, `accepted`, `failed`,
+`unknown` e `superseded`; `accepted` registra o ID retornado pelo transporte e
+não comprova entrega. A outbox não substitui os recibos do lifecycle.
+
+O comando de canal **exato** `/reenviar` recupera a última resposta com falha ou
+envio indeterminado do próprio vínculo/conversa, sem chamar modelo, tools ou
+confirmação. Só tenta partes ainda não aceitas e preserva conteúdo/numeração.
+Uma falha interrompe o restante do lote; não há retry automático. Se a tentativa
+anterior ficou `unknown`, o mesmo texto pode aparecer duas vezes no WhatsApp:
+a duplicação possível é visual, sem repetir a operação comercial. A orientação
+é divulgada no aviso da primeira resposta da sessão.
+
+Antes de tentar um botão, inclusive no reenvio, o canal relê a ação vigente pelo
+serviço compartilhado. Uma prévia substituída fica `superseded` e gera orientação
+de revisão, sem publicar o botão antigo. Recibos concluídos mantêm seus dados
+históricos. Um botão cujo envio ficou `unknown` continua sem autoridade até que
+uma nova mensagem tenha aceite identificável; o `context.id` externo não cria
+essa correlação. Sem resposta recuperável, o canal informa a limitação, inclusive
+após reinício, sem abrir conversa ou reconstruir recibo pelo comando.
+
+A fila da outbox serializa somente I/O por destinatário. A inbox acompanha as
+Promises de apresentação e captura suas falhas, mas libera o processamento de
+novas correções/cliques sem aguardar transporte lento. `whatsappInbox.drain()`
+aguarda processamento e apresentações nos testes; caudas ociosas são removidas.
+Todo estado é local, volátil e limitado a uma instância. Correlação de status e
+janela geral por parte/reenvio continuam nas tasks 6.2 e 6.3.
+
 ## Configuração
 
 Use apenas [apps/api/.env.example](../../../.env.example) como referência. O loader
