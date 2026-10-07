@@ -137,6 +137,7 @@ export function createApplication(environment: NodeJS.ProcessEnv, options: {
       references: whatsappConfirmationReferences,
       present: presentLanguageSchoolWhatsApp,
       transport: options.whatsappTransport ?? createMetaCloudApiClient(config.whatsapp, { fetch }),
+      now: options.whatsappNow ?? now,
     })
     : undefined;
   const whatsappOnNotice: WhatsAppInboxOptions['onNotice'] = options.whatsappOnNotice ?? (whatsappText
@@ -158,7 +159,8 @@ export function createApplication(environment: NodeJS.ProcessEnv, options: {
       webhookVerifyToken: config.whatsapp.webhookVerifyToken,
       wabaId: config.whatsapp.wabaId,
       phoneNumberId: config.whatsapp.phoneNumberId,
-    }, { admit: (event) => recipients.includes(event.senderId) ? whatsappInbox!.admit(event) : 'accepted' });
+    }, { admit: (event) => recipients.includes(event.senderId) ? whatsappInbox!.admit(event) : 'accepted' },
+    (event) => whatsappText?.outbox.receiveStatus(event));
   }
 
   // Ponto interno de composição; argumentos não vêm do navegador.

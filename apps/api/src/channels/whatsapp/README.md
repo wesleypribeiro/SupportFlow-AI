@@ -37,8 +37,42 @@ A fila da outbox serializa somente I/O por destinatário. A inbox acompanha as
 Promises de apresentação e captura suas falhas, mas libera o processamento de
 novas correções/cliques sem aguardar transporte lento. `whatsappInbox.drain()`
 aguarda processamento e apresentações nos testes; caudas ociosas são removidas.
-Todo estado é local, volátil e limitado a uma instância. Correlação de status e
-janela geral por parte/reenvio continuam nas tasks 6.2 e 6.3.
+Todo estado é local, volátil e limitado a uma instância. A janela geral por
+parte/reenvio continua na task 6.3.
+
+## Status e evidência de apresentação — task 6.2
+
+O webhook encaminha status autenticados/projetados diretamente à outbox, fora
+da inbox e do motor. A correlação exige provedor, conta, número empresarial,
+ID aceito de envio e destinatário compatível quando informado. Não cria vínculo,
+conversa, turno ou autorização. `accepted` continua sendo somente aceite HTTP;
+`sent`, `delivered`, `read` e `failed` guardam uma evidência por estado/ID.
+Duplicatas são no-op; entrega/leitura prevalecem sobre eventos atrasados,
+inclusive falhas, sem apagar a evidência dessas falhas.
+
+Durante um envio compatível em curso, até **100 status** ainda sem vínculo podem
+aguardar por **60 segundos** do clock `whatsappNow`. São limites locais do buffer,
+não garantias Meta. Duplicatas não renovam o prazo; saturação descarta novos
+status sem remover os já admitidos. A conciliação ocorre somente após aceite
+identificável do mesmo envio. Expirados e órfãos são removidos nas operações do
+buffer e ao encerrar as tentativas. Rejeição/indeterminação não inventa vínculo.
+
+`failed` torna a apresentação recuperável por `/reenviar`, sem cancelar reserva
+ou mudar `requested`. Cada aceite de recuperação conserva seu próprio ID e
+evidência; uma falha antiga não contamina o novo aceite. Evidência de entrega de
+qualquer tentativa preserva a parte e impede outro reenvio dessa parte.
+
+O scope `previousPresentation` usa somente o texto da apresentação mais recente
+do próprio vínculo, com `delivered`/`read` ou resposta vinculada ao ID aceito que
+o transportou. Sem evidência, fornece `null`. O texto original de `reply` omitido
+pelo apresentador e campos externos não viram oferta. O reconhecimento escolar
+existente decide a intenção; pedido explícito continua independente de oferta,
+e a regra web permanece baseada no histórico. Nenhum contrato público mudou.
+
+`whatsapp-delivery-status.test.ts` cobre status fora de ordem, duplicatas,
+isolamento, corrida com HTTP, limites/expiração, recibo de reserva preservado,
+reenvio e aceitação/rejeição de oferta usando repositories reais, webhook
+assinado, modelo roteirizado e Promises controladas, sem serviços externos.
 
 ## Configuração
 

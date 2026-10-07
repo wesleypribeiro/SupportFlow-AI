@@ -16,6 +16,7 @@ export function createWhatsAppTextChannel<Response extends { conversationId: str
   references: InMemoryWhatsAppConfirmationReferences;
   present: (response: Response) => WhatsAppTextPresentation;
   transport: WhatsAppTransport;
+  now?: () => Date;
 }) {
   const outbox = new InMemoryWhatsAppOutbox<Response>(options);
   const process: WhatsAppInboxProcessor<Response> = async (event) => {
@@ -35,9 +36,7 @@ export function createWhatsAppTextChannel<Response extends { conversationId: str
     const parsed = chatRequestSchema.safeParse({ message: event.text, conversationId: binding?.conversationId });
     if (!parsed.success) return { ok: false, code: 'INVALID_TEXT' };
     if (!binding) return { ok: false, code: 'NOT_FOUND' };
-    // Até a correlação de apresentação da task 6.2, nenhum aceite/status solto
-    // comprova oferta anterior. Pedido explícito continua sendo válido.
-    return options.service.sendMessage(parsed.data, { previousPresentation: null });
+    return options.service.sendMessage(parsed.data, { previousPresentation: outbox.previousPresentation(event) });
   };
 
   async function present(record: WhatsAppInboxRecord<Response>) {

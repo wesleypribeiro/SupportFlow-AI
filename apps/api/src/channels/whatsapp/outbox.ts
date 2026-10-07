@@ -2,6 +2,7 @@ import type { ConversationService } from '../../core/conversation-service.js';
 import type { InMemoryWhatsAppConfirmationReferences } from './confirmation-references.js';
 import type { InMemoryWhatsAppConversationBindings, WhatsAppConversationBinding, WhatsAppConversationIdentity } from './conversation-bindings.js';
 import { whatsappIdSchema } from './events.js';
+import type { WhatsAppEvent } from './events.js';
 import type { WhatsAppInboundMessage, WhatsAppInboxRecord } from './inbox.js';
 import type { WhatsAppMessage, WhatsAppSendRequest, WhatsAppSendResult, WhatsAppTransport } from './transport.js';
 
@@ -12,11 +13,14 @@ export type WhatsAppTextPresentation = {
 };
 type Content = Extract<WhatsAppMessage, { type: 'text' }>
   | (NonNullable<WhatsAppTextPresentation['confirmation']> & { type: 'confirmation' });
+type StatusEvent = Extract<WhatsAppEvent, { type: 'status' }>;
+type Delivery = { messageId: string; evidence: Partial<Record<StatusEvent['status'], number>> };
 export type WhatsAppOutboxPart = {
   content: Content;
-  state: 'pending' | 'sending' | 'accepted' | 'failed' | 'unknown' | 'superseded';
+  state: 'pending' | 'sending' | 'accepted' | 'sent' | 'delivered' | 'read' | 'failed' | 'unknown' | 'superseded';
   request?: WhatsAppSendRequest;
   result?: WhatsAppSendResult;
+  deliveries?: Delivery[];
 };
 export type WhatsAppOutboxRecord<Response> = {
   event: WhatsAppInboundMessage;
@@ -26,6 +30,9 @@ export type WhatsAppOutboxRecord<Response> = {
 };
 type MessageIdentity = Pick<WhatsAppInboundMessage, 'provider' | 'phoneNumberId' | 'messageId'>;
 type RecordKind = 'response' | 'notice' | 'recovery_notice';
+// Buffer auxiliar da corrida status/HTTP, não armazenamento de dedupe.
+export const WHATSAPP_STATUS_BUFFER_LIMIT = 100;
+export const WHATSAPP_STATUS_BUFFER_TTL_MS = 60_000;
 
 export const reviewCurrentPreview = 'Esta prévia não está mais disponível para confirmação. Envie uma mensagem para revisar a prévia atual.';
 const noRecoverableResponse = 'Não há resposta recuperável nesta sessão em memória. Registros perdidos após reinício não podem ser recuperados. Envie uma nova mensagem para continuar.';
@@ -36,21 +43,105 @@ function messageKey(event: MessageIdentity, kind: RecordKind): string {
 function recipientKey(identity: WhatsAppConversationIdentity): string {
   return JSON.stringify([identity.provider, identity.accountId, identity.phoneNumberId, identity.senderId]);
 }
+function deliveryKey(event: Pick<WhatsAppEvent, 'provider' | 'accountId' | 'phoneNumberId'>, messageId: string): string {
+  return JSON.stringify([event.provider, event.accountId, event.phoneNumberId, messageId]);
+}
+function compatibleStatus(event: StatusEvent, identity: WhatsAppConversationIdentity): boolean {
+  return event.provider === identity.provider && event.accountId === identity.accountId
+    && event.phoneNumberId === identity.phoneNumberId
+    && (event.recipientId === undefined || event.recipientId === identity.senderId);
+}
+function hasAcceptedState(part: WhatsAppOutboxPart): boolean {
+  return ['accepted', 'sent', 'delivered', 'read'].includes(part.state);
+}
 
 // Somente apresentação em RAM. Recibos/autorização continuam no lifecycle.
 // Esta fila ordena I/O por destinatário e nunca envolve o lock da conversa.
 export class InMemoryWhatsAppOutbox<Response extends { conversationId: string }> {
   private readonly records = new Map<string, WhatsAppOutboxRecord<Response>>();
   private readonly queues = new Map<string, Promise<void>>();
+  private readonly sends = new Map<string, { record: WhatsAppOutboxRecord<Response>; part: WhatsAppOutboxPart; delivery: Delivery }>();
+  private readonly inFlight = new Map<string, WhatsAppConversationIdentity>();
+  private readonly statuses = new Map<string, { event: StatusEvent; expiresAt: number }>();
+  private readonly presentations = new Map<string, WhatsAppOutboxRecord<Response>>();
 
   constructor(private readonly options: {
     service: Pick<ConversationService<Response, ActionIdentity | null>, 'getCurrentPendingAction'>;
     bindings: InMemoryWhatsAppConversationBindings;
     references: InMemoryWhatsAppConfirmationReferences;
     transport: WhatsAppTransport;
+    now?: () => Date;
   }) {}
 
   get activeQueueCount(): number { return this.queues.size; }
+  get bufferedStatusCount(): number { this.pruneStatuses(); return this.statuses.size; }
+
+  receiveStatus(event: StatusEvent): void {
+    this.pruneStatuses();
+    const known = this.sends.get(deliveryKey(event, event.messageId));
+    if (known) {
+      if (compatibleStatus(event, known.record.event)) this.applyStatus(known.part, known.delivery, event);
+      return;
+    }
+    // Sem envio em curso compatível, um ID desconhecido não ganha autoridade.
+    if (![...this.inFlight.values()].some((identity) => compatibleStatus(event, identity))) return;
+    const key = JSON.stringify([deliveryKey(event, event.messageId), event.recipientId ?? null, event.status]);
+    if (this.statuses.has(key) || this.statuses.size >= WHATSAPP_STATUS_BUFFER_LIMIT) return;
+    this.statuses.set(key, { event: structuredClone(event), expiresAt: this.now() + WHATSAPP_STATUS_BUFFER_TTL_MS });
+  }
+
+  previousPresentation(event: WhatsAppInboundMessage): string | null {
+    const record = this.presentations.get(recipientKey(event));
+    const binding = this.options.bindings.get(event);
+    if (!record?.binding || record.binding.conversationId !== binding?.conversationId || record.parts.length === 0) return null;
+    // Só texto realmente publicado. Nunca usar reply original, texto do webhook
+    // ou uma oferta mais antiga quando a apresentação mais recente não a contém.
+    const evidenced = record.parts.every((part) => part.content.type === 'text' && part.deliveries?.some((delivery) =>
+      delivery.evidence.delivered !== undefined || delivery.evidence.read !== undefined
+      || delivery.messageId === event.replyToMessageId));
+    return evidenced ? record.parts.map((part) => part.content.body).join('\n\n') : null;
+  }
+
+  private now(): number { return (this.options.now?.() ?? new Date()).getTime(); }
+
+  private pruneStatuses(): void {
+    const now = this.now();
+    for (const [key, buffered] of this.statuses) {
+      if (buffered.expiresAt <= now || ![...this.inFlight.values()].some((identity) => compatibleStatus(buffered.event, identity))) {
+        this.statuses.delete(key);
+      }
+    }
+  }
+
+  private applyStatus(part: WhatsAppOutboxPart, delivery: Delivery, event: StatusEvent): void {
+    // Uma evidência por estado é suficiente; duplicatas não reescrevem o snapshot.
+    delivery.evidence[event.status] ??= event.occurredAt;
+    this.refreshDeliveryState(part);
+  }
+
+  private refreshDeliveryState(part: WhatsAppOutboxPart): void {
+    if (part.state === 'superseded') return;
+    if (part.deliveries?.some((delivery) => delivery.evidence.read !== undefined)) part.state = 'read';
+    else if (part.deliveries?.some((delivery) => delivery.evidence.delivered !== undefined)) part.state = 'delivered';
+    else if (part.result?.status === 'accepted') {
+      const messageId = part.result.messageId;
+      const evidence = part.deliveries?.find((delivery) => delivery.messageId === messageId)?.evidence;
+      part.state = evidence?.failed !== undefined ? 'failed' : evidence?.sent !== undefined ? 'sent' : 'accepted';
+    }
+  }
+
+  private recordAccepted(record: WhatsAppOutboxRecord<Response>, part: WhatsAppOutboxPart, messageId: string): void {
+    const delivery: Delivery = { messageId, evidence: {} };
+    (part.deliveries ??= []).push(delivery);
+    const key = deliveryKey(record.event, messageId);
+    this.sends.set(key, { record, part, delivery });
+    this.pruneStatuses();
+    for (const [bufferKey, buffered] of this.statuses) {
+      if (deliveryKey(buffered.event, buffered.event.messageId) !== key) continue;
+      if (compatibleStatus(buffered.event, record.event)) this.applyStatus(part, delivery, buffered.event);
+      this.statuses.delete(bufferKey);
+    }
+  }
 
   get(event: MessageIdentity, kind: RecordKind = 'response'): WhatsAppOutboxRecord<Response> | undefined {
     const record = this.records.get(messageKey(event, kind));
@@ -112,7 +203,7 @@ export class InMemoryWhatsAppOutbox<Response extends { conversationId: string }>
 
   private async attempt(record: WhatsAppOutboxRecord<Response>): Promise<void> {
     for (const part of record.parts) {
-      if (part.state === 'accepted' || part.state === 'superseded') continue;
+      if (hasAcceptedState(part) || part.state === 'superseded') continue;
       let request: WhatsAppSendRequest;
       let reference: string | undefined;
       try {
@@ -143,18 +234,26 @@ export class InMemoryWhatsAppOutbox<Response extends { conversationId: string }>
       }
       part.request = structuredClone(request);
       part.state = 'sending';
+      const recipient = recipientKey(record.event);
+      this.presentations.set(recipient, record);
+      this.inFlight.set(recipient, record.event);
       let result: WhatsAppSendResult;
       try { result = await this.options.transport.send(structuredClone(request)); }
       catch { result = { status: 'unknown', reason: 'network_error' }; }
       if (result.status === 'accepted' && (!whatsappIdSchema.safeParse(result.messageId).success || !result.messageId.trim()
+        || this.sends.has(deliveryKey(record.event, result.messageId))
         || (reference && !this.options.references.recordSendResult(reference, request, result)))) {
         result = { status: 'unknown', reason: 'invalid_response' };
       }
       part.result = structuredClone(result);
       part.state = result.status === 'rejected' ? 'failed' : result.status;
+      if (result.status === 'accepted') this.recordAccepted(record, part, result.messageId);
+      this.refreshDeliveryState(part);
+      this.inFlight.delete(recipient);
+      this.pruneStatuses();
       // Uma falha interrompe somente este lote. Sem timers/backoff/retry; as
       // partes restantes ficam pending até um comando explícito de recuperação.
-      if (part.state !== 'accepted') throw new Error('Apresentação WhatsApp não aceita.');
+      if (!hasAcceptedState(part)) throw new Error('Apresentação WhatsApp não aceita.');
     }
   }
 }
