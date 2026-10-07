@@ -7,13 +7,13 @@ import type { WhatsAppDemoSessionPolicy, WhatsAppSessionNotice } from './demo-se
 export type WhatsAppInboundMessage = Exclude<WhatsAppEvent, { type: 'status' }>;
 type MessageIdentity = Pick<WhatsAppInboundMessage, 'provider' | 'phoneNumberId' | 'messageId'>;
 export type WhatsAppInboxProcessor<Response> = (event: WhatsAppInboundMessage) => Promise<
-  ConversationServiceResult<Response> | { ok: false; code: 'INVALID_TEXT' | 'UNSUPPORTED_MESSAGE' }
+  ConversationServiceResult<Response> | { ok: false; code: 'INVALID_TEXT' | 'UNSUPPORTED_MESSAGE' | 'RESEND_REQUESTED' }
 >;
 type ProcessingState<Response> =
   | { state: 'received' | 'processing' }
   | { state: 'processed'; response: Response }
   | { state: 'failed'; code: 'NOT_FOUND' | 'ACTION_STALE' | 'CHAT_ERROR' }
-  | { state: 'ignored'; code: 'PROCESSOR_UNAVAILABLE' | 'SESSION_UNAVAILABLE' | 'INVALID_INITIAL_TEXT' | 'INVALID_TEXT' | 'UNSUPPORTED_MESSAGE' };
+  | { state: 'ignored'; code: 'PROCESSOR_UNAVAILABLE' | 'SESSION_UNAVAILABLE' | 'INVALID_INITIAL_TEXT' | 'INVALID_TEXT' | 'UNSUPPORTED_MESSAGE' | 'RESEND_REQUESTED' };
 export type WhatsAppInboxRecord<Response> = {
   event: WhatsAppInboundMessage;
   fingerprint: string;
@@ -57,6 +57,7 @@ function fingerprint(event: WhatsAppInboundMessage): string {
 export class InMemoryWhatsAppInbox<Response = unknown> {
   private readonly records = new Map<string, WhatsAppInboxRecord<Response>>();
   private readonly queues = new Map<string, Promise<void>>();
+  private readonly presentations = new Map<string, Set<Promise<void>>>();
   private readonly waiting = new Map<string, number>();
   private readonly limits: typeof DEFAULT_LIMITS;
   private readonly now: () => Date;
@@ -123,7 +124,9 @@ export class InMemoryWhatsAppInbox<Response = unknown> {
   async drain(identity?: WhatsAppConversationIdentity): Promise<void> {
     const key = identity && bindingKey(identity);
     for (;;) {
-      const tails = key === undefined ? [...this.queues.values()] : [this.queues.get(key)].filter((tail) => tail !== undefined);
+      const tails = key === undefined
+        ? [...this.queues.values(), ...[...this.presentations.values()].flatMap((tasks) => [...tasks])]
+        : [this.queues.get(key), ...this.presentations.get(key) ?? []].filter((tail) => tail !== undefined);
       if (tails.length === 0) return;
       await Promise.all(tails);
     }
@@ -144,7 +147,7 @@ export class InMemoryWhatsAppInbox<Response = unknown> {
         const result = await this.processor(structuredClone(record.event));
         const outcome: ProcessingState<Response> = result.ok
           ? { state: 'processed', response: structuredClone(result.response) }
-          : result.code === 'INVALID_TEXT' || result.code === 'UNSUPPORTED_MESSAGE'
+          : result.code === 'INVALID_TEXT' || result.code === 'UNSUPPORTED_MESSAGE' || result.code === 'RESEND_REQUESTED'
             ? { state: 'ignored', code: result.code }
             : { state: 'failed', code: result.code };
         this.records.set(key, { ...snapshot, ...outcome });
@@ -158,21 +161,34 @@ export class InMemoryWhatsAppInbox<Response = unknown> {
     if (notice && this.options.onNotice) {
       const age = this.now().getTime() - record.event.occurredAt;
       if (age >= 0 && age < 24 * 60 * 60 * 1_000) {
-        try {
-          await this.options.onNotice(structuredClone(record.event), structuredClone(notice));
-        } catch {
-          this.records.set(key, { ...this.records.get(key)!, noticeError: 'NOTICE_ERROR' });
-        }
+        this.trackPresentation(key, record.event, 'noticeError', async () => {
+          await this.options.onNotice!(structuredClone(record.event), structuredClone(notice));
+        });
       }
     }
     // O envelope/erro já está salvo antes de qualquer formatação/envio. Uma
     // falha nesta etapa não transforma processamento concluído em CHAT_ERROR.
     if (this.options.onProcessed) {
-      try {
-        await this.options.onProcessed(structuredClone(this.records.get(key)!));
-      } catch {
-        this.records.set(key, { ...this.records.get(key)!, presentationError: 'PRESENTATION_ERROR' });
-      }
+      this.trackPresentation(key, record.event, 'presentationError', async () => {
+        await this.options.onProcessed!(structuredClone(this.records.get(key)!));
+      });
     }
+  }
+
+  private trackPresentation(key: string, event: WhatsAppInboundMessage,
+    field: 'noticeError' | 'presentationError', work: () => Promise<void>): void {
+    const identity = bindingKey(event);
+    const tasks = this.presentations.get(identity) ?? new Set<Promise<void>>();
+    this.presentations.set(identity, tasks);
+    // Iniciar callbacks na ordem de processamento, mas aguardar rede somente
+    // em drain. A outbox serializa envios; correções/cliques liberam esta fila.
+    const pending = work().catch(() => {
+      this.records.set(key, { ...this.records.get(key)!,
+        [field]: field === 'noticeError' ? 'NOTICE_ERROR' : 'PRESENTATION_ERROR' });
+    }).finally(() => {
+      tasks.delete(pending);
+      if (tasks.size === 0) this.presentations.delete(identity);
+    });
+    tasks.add(pending);
   }
 }

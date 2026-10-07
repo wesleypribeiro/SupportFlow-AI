@@ -19,6 +19,8 @@ export class WhatsAppDemoSessionPolicy {
 
   async prepare(event: WhatsAppInboundMessage): Promise<SessionPreparation> {
     if (this.bindings.get(event)) return { state: 'ready' };
+    // Recuperação sem estado não abre conversa nem reconstrói resultados.
+    if (event.type === 'text' && event.text === '/reenviar') return { state: 'ready' };
     if (event.type === 'button_reply') {
       return { state: 'ignored', code: 'SESSION_UNAVAILABLE', notice: {
         kind: 'session_unavailable',
@@ -34,7 +36,7 @@ export class WhatsAppDemoSessionPolicy {
     if (!opened.ok) return { state: 'failed', code: 'CHAT_ERROR' };
     return { state: 'ready', notice: {
       kind: 'new_session',
-      body: 'Esta é uma nova sessão demonstrativa, com dados em memória. Os registros anteriores não foram recuperados.',
+      body: 'Esta é uma nova sessão demonstrativa, com dados em memória. Os registros anteriores não foram recuperados. Se uma resposta falhar, envie exatamente /reenviar para recuperar a última resposta disponível, sem repetir a operação. Um envio indeterminado pode aparecer duplicado no WhatsApp; a duplicação é apenas visual.',
     } };
   }
 }

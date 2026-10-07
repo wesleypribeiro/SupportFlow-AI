@@ -140,7 +140,7 @@ export function createApplication(environment: NodeJS.ProcessEnv, options: {
     })
     : undefined;
   const whatsappOnNotice: WhatsAppInboxOptions['onNotice'] = options.whatsappOnNotice ?? (whatsappText
-    ? (event, notice) => whatsappText.sendText(event.senderId, notice.body)
+    ? (event, notice) => whatsappText.outbox.sendNotice(event, notice.body)
     : undefined);
   const whatsappInbox = whatsappBindings
     ? new InMemoryWhatsAppInbox(options.whatsappProcessor ?? whatsappText?.process, {
@@ -192,5 +192,5 @@ export function createApplication(environment: NodeJS.ProcessEnv, options: {
       return transferToHuman(input, { conversationId, visitorIntent });
     });
 
-  return { server, config, catalogTools, conversations, conversationService, whatsappBindings, whatsappConfirmationReferences, whatsappInbox, prepareAction, prepareLead, prepareTrialClass, getAvailableSlots, requestHumanHandoff };
+  return { server, config, catalogTools, conversations, conversationService, whatsappBindings, whatsappConfirmationReferences, whatsappInbox, whatsappOutbox: whatsappText?.outbox, prepareAction, prepareLead, prepareTrialClass, getAvailableSlots, requestHumanHandoff };
 }
