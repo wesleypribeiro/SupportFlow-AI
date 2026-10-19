@@ -512,6 +512,10 @@ outbox, `/reenviar`, status de entrega ou a janela geral das tasks 6.x.
 
 ## Verificação local
 
+O [registro da task 7.2](verification.md) reúne ambiente, contagens da seleção
+focada, auditoria de isolamento/segredos e a falha de subprocesso no sandbox.
+As validações globais e a marcação final dessa task cabem ao processo pai do SDD Agent.
+
 ### Logs e exposição — implementação da task 2.4
 
 O escopo `/webhooks/whatsapp` substitui serializers de request, response e erro
