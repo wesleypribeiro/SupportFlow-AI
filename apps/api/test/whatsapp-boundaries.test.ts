@@ -49,6 +49,40 @@ describe('isolamento do canal e dos segredos', () => {
     }
   });
 
+  it('serviço e componentes reutilizáveis do core permanecem independentes dos adapters HTTP', () => {
+    const base = resolve(root, 'apps/api/src/core');
+    const adapters = [resolve(base, 'chat-route.ts'), resolve(base, 'server.ts')];
+    const files = sources(base).filter((path) => !adapters.includes(path));
+    const internalModules = files.map((path) => path.replace(/\.ts$/, '.js'));
+    expect(files).toContain(resolve(base, 'conversation-service.ts'));
+    for (const path of files) {
+      for (const dependency of imports(path)) {
+        if (dependency.startsWith('.')) {
+          expect(internalModules, `${path}: ${dependency}`).toContain(resolve(dirname(path), dependency));
+        } else {
+          expect(dependency, path).toMatch(/^(?:@langchain\/core(?:\/.*)?|@supportflow\/contracts\/chat|node:crypto|zod)$/);
+        }
+      }
+    }
+  });
+
+  it.each(['domain', 'application'])('%s escolar não importa canal, frameworks ou repositories concretos', (layer) => {
+    const base = resolve(root, 'apps/api/src/modules/language-school');
+    const allowedRoots = [resolve(base, 'domain'), ...(layer === 'application' ? [resolve(base, layer)] : [])];
+    const files = sources(resolve(base, layer));
+    expect(files.length).toBeGreaterThan(0);
+    for (const path of files) {
+      for (const dependency of imports(path)) {
+        if (dependency.startsWith('.')) {
+          const target = resolve(dirname(path), dependency);
+          expect(allowedRoots.some((directory) => target.startsWith(directory + sep)), `${path}: ${dependency}`).toBe(true);
+        } else {
+          expect(dependency, path).toMatch(/^(?:zod|@supportflow\/contracts(?:\/.*)?)$/);
+        }
+      }
+    }
+  });
+
   it('apresentador escolar depende somente dos contratos e da formatação, sem consultar ou gravar negócios', () => {
     const presenter = resolve(root, 'apps/api/src/modules/language-school/infrastructure/whatsapp-presentation.ts');
     for (const dependency of imports(presenter)) {
