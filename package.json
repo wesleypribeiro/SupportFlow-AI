@@ -13,6 +13,7 @@
     "npm": ">=11 <12"
   },
   "scripts": {
+    "whatsapp:manual": "npm run whatsapp:manual --workspace @supportflow/api --",
     "dev": "concurrently --kill-others --names api,web \"npm run dev --workspace @supportflow/api\" \"npm run dev --workspace @supportflow/web\"",
     "dev:api": "npm run dev --workspace @supportflow/api",
     "dev:web": "npm run dev --workspace @supportflow/web",

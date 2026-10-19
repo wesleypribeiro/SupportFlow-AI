@@ -10,6 +10,10 @@ import type { ChatResult } from '@langchain/core/outputs';
 type ScriptedStep = AIMessage | Error | ((messages: readonly BaseMessage[]) => AIMessage | Promise<AIMessage>);
 type ScriptedCallOptions = BaseChatModelCallOptions & { tools?: BindToolsInput[] };
 type RecordedCall = { messages: BaseMessage[]; options: ScriptedCallOptions };
+type ScriptFallback = {
+  response: (messages: readonly BaseMessage[]) => AIMessage | Promise<AIMessage>;
+  context: (messages: readonly BaseMessage[]) => unknown;
+};
 
 function isContextTool(tool: BindToolsInput) {
   return 'function' in tool && tool.function?.name === 'interpret_context_patch';
@@ -23,7 +27,7 @@ export class ScriptedChatModel extends BaseChatModel<ScriptedCallOptions> {
   private readonly steps: ScriptedStep[];
   private readonly contextSteps: unknown[];
 
-  constructor(steps: ScriptedStep[], options: { contextSteps?: unknown[] } = {}) {
+  constructor(steps: ScriptedStep[], private readonly options: { contextSteps?: unknown[]; fallback?: ScriptFallback } = {}) {
     super({});
     this.steps = [...steps];
     this.contextSteps = [...options.contextSteps ?? []];
@@ -43,7 +47,7 @@ export class ScriptedChatModel extends BaseChatModel<ScriptedCallOptions> {
       this.contextCalls.push({ messages: [...messages], options: { ...options } });
       const patch = this.contextSteps.length
         ? this.contextSteps.shift()
-        : { goal: null, name: null, contact: null, courseReference: null };
+        : this.options.fallback?.context(messages) ?? { goal: null, name: null, contact: null, courseReference: null };
       if (patch instanceof Error) throw patch;
 
       // O parser de structured output do LangChain processa a resposta simulada.
@@ -63,7 +67,7 @@ export class ScriptedChatModel extends BaseChatModel<ScriptedCallOptions> {
     }
 
     this.calls.push({ messages: [...messages], options: { ...options } });
-    const step = this.steps.shift();
+    const step = this.steps.shift() ?? this.options.fallback?.response;
     if (!step) throw new Error('O teste não definiu resposta para esta chamada do modelo.');
     if (step instanceof Error) throw step;
     const message = typeof step === 'function' ? await step(messages) : step;

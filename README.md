@@ -1,6 +1,6 @@
 # SupportFlow AI
 
-Assistente de atendimento com IA para **escolas de idiomas**, desenvolvido como projeto Full Stack de portfólio. O MVP consulta informações comerciais, registra o interesse de um visitante, confirma aulas experimentais e registra pedidos locais de atendimento humano.
+Assistente de atendimento com IA para **escolas de idiomas**, desenvolvido como projeto Full Stack de portfólio. O MVP consulta informações comerciais, registra o interesse de um visitante, confirma aulas experimentais e registra pedidos locais de contato, sem conectar atendentes.
 
 **Esta versão é uma demonstração:** escola fictícia única, agenda interna e dados em memória. Não é um sistema de produção para armazenar dados reais de alunos.
 
@@ -10,7 +10,8 @@ Assistente de atendimento com IA para **escolas de idiomas**, desenvolvido como 
 - [Instalação](#requisitos-e-instalação) · [Ambiente](#configuração-do-ambiente) · [Execução](#execução-local)
 - [Jornada](#fluxo-de-atendimento) · [Tools](#tools-disponíveis) · [API](#contratos-e-endpoints)
 - [Fixtures](#dados-demonstrativos) · [Memória](#persistência-e-reinicialização)
-- [Confirmação](#confirmação-e-segurança-das-operações) · [Concorrência](#disponibilidade-concorrência-e-recibos) · [Handoff](#atendimento-humano-local)
+- [Confirmação](#confirmação-e-segurança-das-operações) · [Concorrência](#disponibilidade-concorrência-e-recibos) · [Handoff](#handoff-solicitação-local)
+- [WhatsApp](#canal-whatsapp-demonstrativo) · [Guia de ensaio manual](deploy/whatsapp/manual.md)
 - [Validação](#testes-e-validação) · [Limitações](#limitações-conhecidas) · [Modelo real](#avaliação-opcional-com-modelo-real) · [Evolução](#próximas-evoluções)
 
 ## Funcionalidades implementadas
@@ -20,7 +21,8 @@ Assistente de atendimento com IA para **escolas de idiomas**, desenvolvido como 
 - Contexto atual separado do histórico; correções substituem preferências e invalidam prévias antigas.
 - Um lead por conversa: cadastro e atualização confirmados, sem duplicação por repetição.
 - Reserva de aula experimental com confirmação específica, uma vaga por slot e recibos históricos.
-- Solicitação local de atendimento humano, inclusive sem cadastro, com protocolo e status `requested`.
+- Registro local de pedido de contato, inclusive sem cadastro, com protocolo e status `requested`; sem encaminhamento a equipe.
+- Canal WhatsApp opcional pela Cloud API oficial: webhook assinado, texto, botões de confirmação, status e recuperação de envio em memória.
 - Sete tools com entradas/saídas Zod estritas; fatos e recibos oficiais separados da prosa da LLM.
 - Testes de domínio, contratos, HTTP, frontend e jornadas integradas sem serviços externos.
 
@@ -96,7 +98,24 @@ Edite o arquivo local sem versioná-lo. Os scripts `dev` e `start` da API usam o
 
 Descomente e preencha as duas variáveis OpenAI somente para a avaliação real. Configurar apenas uma impede a inicialização. Não use `NEXT_PUBLIC_`, não coloque chaves no frontend e não envie configuração do modelo pelo chat.
 
-Sem as duas variáveis, frontend e healthcheck funcionam, mas `/api/chat` retorna `500 / CHAT_ERROR`: **não há modelo demonstrativo automático em `npm run dev`**. O `ScriptedChatModel` é utilizado pelos testes. `SCHOOL_ID` desconhecido também impede a inicialização; não cria outra escola.
+Sem as duas variáveis, frontend e healthcheck funcionam, mas `/api/chat` retorna `500 / CHAT_ERROR`: **não há modelo demonstrativo automático em `npm run dev`**. O `ScriptedChatModel` é utilizado pelos testes e pelo harness manual isolado de WhatsApp. `SCHOOL_ID` desconhecido também impede a inicialização; não cria outra escola.
+
+## Canal WhatsApp demonstrativo
+
+O canal reutiliza o mesmo serviço de conversa, tools, repositories e lifecycle
+do web. Está desabilitado por padrão; `WHATSAPP_ENABLED=true` exige a configuração
+Meta completa exclusivamente no backend. O [README do canal](apps/api/src/channels/whatsapp/README.md)
+descreve arquitetura, inbox/outbox, `/reenviar`, janela de 24 horas, limites e
+perda total de estado após reinício. Templates, mídia e operação comercial não
+fazem parte do MVP.
+
+O [guia manual](deploy/whatsapp/manual.md) fornece setup privado, frases com
+dados fictícios, proxy HTTPS restrito ao webhook e checklist de número de teste.
+`npm run whatsapp:manual` apenas mostra ajuda; o transporte real exige as opções
+explícitas documentadas e pode gerar custos. O harness usa `ScriptedChatModel`,
+clock comercial fixo e hora real para o canal, sem OpenAI. Não exponha a API ou
+o frontend inteiros pelo túnel. A homologação Meta é uma etapa separada (task 7.4)
+e não é comprovada pelos testes locais ou pela existência deste guia.
 
 ## Execução local
 
@@ -143,7 +162,7 @@ Com o modelo configurado, abra o chat e use dados fictícios. Enter envia; Shift
 6. Escolha uma data/hora realmente retornada, por exemplo **“Escolho 11/06/2030 às 10h.”**
 7. Peça para agendar no horário selecionado; revise aluno, curso, data, hora e fuso.
 8. Clique em **Confirmar aula experimental**. Confira o recibo oficial, que pode indicar sucesso ou indisponibilidade.
-9. Em qualquer momento, diga **“Quero falar com alguém.”** para solicitar atendimento humano local.
+9. Em qualquer momento, diga **“Quero falar com alguém.”** para registrar uma solicitação local de contato.
 
 Também é possível escolher o horário antes do cadastro; a proposta de reserva exige que o lead já esteja confirmado e corresponda ao contexto vigente. Se faltarem dados, o assistente deve pedir complemento. Alterar objetivo ou contato após cadastrar não atualiza automaticamente o lead: uma nova prévia de cadastro deve ser confirmada antes de prosseguir com a reserva.
 
@@ -250,7 +269,7 @@ Os sufixos `_past` e `_occupied` não determinam disponibilidade: ela vem do ins
 
 ## Persistência e reinicialização
 
-> **Toda a persistência deste MVP é memória local do processo da API. Reiniciar a API apaga conversas, histórico, contexto, leads, reservas, handoffs, pending actions e recibos.**
+> **Toda a persistência deste MVP é memória local do processo da API. Reiniciar a API apaga conversas, histórico, contexto, leads, reservas, handoffs, pending actions e recibos, além de vínculos WhatsApp, inbox/outbox, referências, status e janela.**
 
 As fixtures de escola/cursos/slots são carregadas novamente e as vagas começam sem reservas. Não existe banco de dados, arquivo de persistência, recuperação de sessão entre reinicializações ou armazenamento comercial durável.
 
@@ -298,7 +317,7 @@ Após uma escrita, o recibo determinístico é salvo antes da redação opcional
 
 Reservas concluídas são snapshots: mudar contexto ou atualizar o lead não cancela, remarca ou reescreve o booking. A atomicidade local não é uma solução distribuída/persistente para múltiplas instâncias; isso exigiria outra implementação.
 
-## Atendimento humano local
+## Handoff: solicitação local
 
 `transfer_to_human` funciona sem nome, contato, curso, lead ou reserva. O backend verifica pedido explícito ou aceitação da última oferta válida já apresentada. Um “sim” genérico sem oferta de handoff não registra solicitação.
 
@@ -319,7 +338,7 @@ openspec validate --specs --strict
 openspec validate --archived
 ```
 
-A auditoria da task 7.2 registrou **882 testes aprovados em 39 arquivos**, contagem reconfirmada na revisão documental 7.3. Consulte o [registro de verificação](openspec/changes/archive/2026-09-29-language-school-sales-mvp/verification.md) para ambiente, resultados e isolamento arquitetural.
+A auditoria escolar da task 7.2 registrou **882 testes aprovados em 39 arquivos**, contagem histórica reconfirmada na revisão documental escolar 7.3. Consulte o [registro escolar](openspec/changes/archive/2026-09-29-language-school-sales-mvp/verification.md) para ambiente e resultados. A verificação posterior do canal está no [registro WhatsApp](apps/api/src/channels/whatsapp/verification.md); essas contagens não representam automaticamente a suíte atual.
 
 A suíte principal não exige `.env`, chave OpenAI, rede externa, banco ou calendário. Usa Vitest, `ScriptedChatModel`, repositories em memória e Fastify `server.inject()`. O teste do SDK OpenAI usa transporte HTTP simulado. O frontend usa jsdom/Testing Library com fetch simulado; a [jornada integrada](apps/api/test/language-school-journey.test.ts) substitui somente a geração e falhas deliberadas de transporte, preservando casos de uso e repositories reais.
 
@@ -330,7 +349,8 @@ Os testes cobrem confirmação, revisão, concorrência, isolamento, correções
 - Aplicação demonstrativa com memória volátil e uma escola fictícia; sem autenticação, multi-tenant ou recuperação de sessão.
 - Agenda fixa interna; sem calendário externo, cancelamento ou remarcação.
 - Sem pagamentos, billing, painel administrativo, CRM completo ou atendimento humano ao vivo.
-- Sem WhatsApp, notificações externas, voz, RAG, LangGraph ou múltiplos agentes.
+- WhatsApp restrito a uma conta/número de teste, texto e reply buttons; sem templates, mídia, campanhas ou persistência entre reinícios.
+- Sem notificações a equipes, voz, RAG, LangGraph ou múltiplos agentes.
 - Seleção de horário e reconhecimento de intenção de handoff são conservadores; formulações ambíguas podem exigir esclarecimento.
 
 ### Texto livre continua probabilístico
@@ -360,6 +380,10 @@ No DevTools, acompanhe `/api/chat` e `/api/chat/confirm`: os fatos observáveis 
 
 ## Próximas evoluções
 
-A próxima evolução prevista é o **canal WhatsApp para o SupportFlow AI**, a ser planejado em **uma change independente**, reutilizando o motor conversacional existente. Nenhuma integração WhatsApp está implementada neste MVP.
+O canal WhatsApp foi implementado incrementalmente na change
+`whatsapp-channel-mvp`, reutilizando o motor conversacional existente. Sua
+homologação real depende da task 7.4 explicitamente autorizada. Operação comercial
+futura exige persistência durável de negócios e canal, além de escalonamento
+operacional real; essas capacidades não estão implementadas.
 
 As 22 tasks de `language-school-sales-mvp` foram concluídas e a change foi arquivada em `openspec/changes/archive/2026-09-29-language-school-sales-mvp/`. As seis capacidades consolidadas estão em `openspec/specs/`. Configuração, specs e histórico arquivado estão liberados para versionamento pelo `.gitignore`; a change antiga `supportflow-ai-mvp` continua ignorada e não arquivada.
