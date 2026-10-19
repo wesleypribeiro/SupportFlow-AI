@@ -1,7 +1,7 @@
-# Fronteira WhatsApp — implementação incremental
+# Canal WhatsApp demonstrativo
 
-Esta etapa disponibiliza configuração backend, tipos de transporte e um webhook
-de validação. `createApplication(environment)` compõe `config.whatsapp` e registra
+O canal disponibiliza configuração backend, recepção assinada, texto, botões,
+entrega e recuperação em memória. `createApplication(environment)` compõe `config.whatsapp` e registra
 GET/POST `/webhooks/whatsapp/meta` somente quando habilitado. Desabilitado, ambos
 retornam 404. Projeta eventos validados e admite mensagens na inbox local antes do
 ACK. Desde a task 4.3, a composição padrão conecta texto ao serviço compartilhado,
@@ -9,6 +9,83 @@ ao apresentador escolar e ao cliente Cloud API. O primeiro texto válido abre
 a sessão vazia; a resposta/erro fica salva na inbox antes da apresentação.
 Avisos demonstrativos também são enviados pelo transporte composto.
 O core, as sete tools, os contratos públicos e o frontend permanecem independentes.
+
+O [guia manual](../../../../../deploy/whatsapp/manual.md) reúne setup seguro,
+harness opt-in com ScriptedChatModel, proxy restrito e checklist para a task 7.4.
+Somente dados comerciais fictícios, uma escola, uma conta/número e uma instância.
+Handoff é **solicitação local**: enviar seu protocolo ao visitante não encaminha
+a conversa a uma equipe, não inicia atendimento ao vivo e não muda `requested`.
+
+## Arquitetura e estados operacionais
+
+```text
+Meta → GET/POST /webhooks/whatsapp/meta → HMAC / origem / projeção
+     → allowlist → inbox / vínculo → ConversationService compartilhado
+     → ChatRunner / tools escolares / lifecycle / repositories reais
+     → envelope salvo → apresentador escolar → outbox → cliente Cloud API
+Status assinado → outbox (sem turno, confirmação ou alteração comercial)
+Web → rotas HTTP existentes → mesmo ConversationService
+```
+
+A inbox ordena admissões por vínculo. O serviço mantém a serialização existente
+por conversa, sem aquisição aninhada ou lock global. A fila da outbox ordena I/O
+por destinatário sem prender novas correções a um envio lento. A LLM propõe;
+backend/lifecycle validam revisão, vínculo e autorização. Botões têm referências
+opacas ligadas à mensagem aceita; texto `sim` não confirma cadastro/reserva.
+
+| Registro/estado | Significado e próximo passo |
+| --- | --- |
+| Inbox `received` | Admitido em RAM antes do ACK; ainda não processado |
+| Inbox `processing` | Motor em execução na fila do vínculo |
+| Inbox `processed` | Envelope oficial salvo antes de apresentar/enviar |
+| Inbox `failed` | Erro controlado; duplicata não reexecuta o motor |
+| Inbox `ignored` | Sem turno, por exemplo sessão perdida, texto inválido ou comando de recuperação |
+| Outbox `pending` / `sending` | Parte aguardando ou em tentativa |
+| Outbox `accepted` | ID recebido em resposta HTTP válida; ainda não comprova entrega |
+| Outbox `sent` / `delivered` / `read` | Evidência de status correlacionado; não é estado comercial |
+| Outbox `failed` | Rejeição explícita/status de falha; pode ser recuperável |
+| Outbox `unknown` | Aceite indeterminado; reenvio pode duplicar apresentação |
+| Outbox `blocked_window` | Janela encerrada; aguardar nova mensagem e recuperação explícita |
+| Outbox `superseded` | Prévia substituída; revisar a ação vigente |
+
+HTTP 200 reconhece recebimento local, não persistência, conclusão ou entrega.
+`failed` de envio nunca cancela reserva. `received → processing → processed`
+também pode terminar em `failed`/`ignored`; `/reenviar` aparece como
+`ignored / RESEND_REQUESTED` na inbox e recupera a saída separadamente.
+
+## Limites e volatilidade
+
+| Limite implementado | Política |
+| --- | --- |
+| Webhook | 1 MiB; excedente recebe 413 |
+| Inbox por execução | 10.000 mensagens admitidas; novas admissões excedentes recebem 503 |
+| Fila por remetente | 100 mensagens aguardando; excedente recebe 503 |
+| Texto de entrada do motor | 1 a 2.000 caracteres após trim; não truncar ou dividir em turnos |
+| Texto de saída | Até 4.096 unidades UTF-16 por parte, incluindo numeração |
+| Prévia interativa | Até 1.024 unidades UTF-16; acima disso, texto integral sem botão incompleto |
+| Botões | Até 3; título até 20, referência até 256 unidades UTF-16 |
+| Envio | Timeout de 10 segundos por parte; sem retry automático |
+| Buffer de status antecipado | Até 100 itens por 60 segundos; não é dedupe durável |
+
+Os limites de inbox/fila/corpo/buffer são escolhas locais. IDs de dedupe e
+referências não são expulsos silenciosamente; duplicatas/status conhecidos
+continuam reconhecíveis quando a admissão está cheia. Não há promessa de um
+teto de memória em bytes: envelopes e históricos também ocupam RAM.
+
+Reinício perde **vínculos, inbox/outbox, referências, status, janela, conversas,
+leads, reservas, handoffs, ações e recibos**. Mensagem anterior ao marco inicial
+(arredondado para o próximo segundo) recebe ACK e é descartada. Botão sem vínculo
+não cria conversa nem reconstrói operação; novo texto abre sessão vazia e avisa
+a perda. Crash após ACK pode perder trabalho sem reentrega. Não há recuperação
+comercial, deduplicação entre reinícios, exactly-once ou suporte a múltiplas
+instâncias. Persistir somente inbox/outbox não resolveria a perda dos negócios.
+
+Somente texto/reply buttons dentro da janela de 24 horas são suportados. No
+limite exato e depois, bloquear envio; templates, campanhas, follow-up automático,
+mídia e atendimento por equipe ficam fora do escopo. A
+[política oficial](https://whatsappbusiness.com/policy/) exige caminho de
+escalonamento; o protocolo local não o substitui. No ensaio, o responsável fornece
+um contato real separado, sem alterar fixtures. Mais detalhes de janela abaixo.
 
 ## Outbox e recuperação explícita — task 6.1
 
@@ -19,7 +96,8 @@ não comprova entrega. A outbox não substitui os recibos do lifecycle.
 
 O comando de canal **exato** `/reenviar` recupera a última resposta com falha,
 envio indeterminado ou bloqueio de janela do próprio vínculo/conversa, sem chamar modelo, tools ou
-confirmação. Só tenta partes ainda não aceitas e preserva conteúdo/numeração.
+confirmação. Preserva partes aceitas sem falha e conteúdo/numeração; um status
+`failed` posterior pode tornar uma parte recuperável, conforme a seção 6.2.
 Uma falha interrompe o restante do lote; não há retry automático. Se a tentativa
 anterior ficou `unknown`, o mesmo texto pode aparecer duas vezes no WhatsApp:
 a duplicação possível é visual, sem repetir a operação comercial. A orientação
@@ -185,8 +263,8 @@ A suíte [`whatsapp-cloud-api-client.test.ts`](../../../test/whatsapp-cloud-api-
 usa `fetch` simulado, bloqueia o fetch global e controla timers/Promises. Cobre
 payload/destinatário, limites inclusive Unicode, aceite sem alegar entrega,
 rejeições, respostas inválidas, timeout e falhas tardias, sem chamadas à Meta.
-O registro privado de referências está descrito na task 5.1 abaixo. Publicação
-de botões, confirmação, outbox, status e janela geral continuam nas tasks posteriores.
+O registro privado de referências e a confirmação estão descritos nas seções
+5.x abaixo; outbox, status e janela estão conectados conforme as seções 6.x.
 
 ## Webhook incremental — task 2.2
 
@@ -273,7 +351,7 @@ Itens de mensagem/status inválidos são isolados; contagens por códigos fixos
 registram `INVALID_MESSAGE`, `INVALID_STATUS` ou tipos não suportados, sem
 payload/identificadores. Mídia, reação, botão de template, list reply e tipos
 desconhecidos não geram evento, download, modelo ou escrita comercial. A
-correlação/autorização de referências de botão permanece para o Milestone 5.
+correlação/autorização de referências de botão é feita pelo canal nas seções 5.x.
 
 ## Vínculo interno de conversa — task 3.1
 
@@ -408,16 +486,15 @@ interrompe as demais partes da resposta e mantém o resultado salvo.
 
 O scope interno `previousPresentation` atravessa o serviço/core até o adapter
 escolar. `undefined` mantém a regra web baseada na última resposta do histórico;
-`null` declara ausência de oferta apresentada. O canal passa sempre `null` nesta
-etapa: aceite HTTP, status ainda não correlacionado ou `context.id` externo não
-comprovam apresentação. Pedido explícito de handoff continua funcionando sem
+`null` declara ausência de oferta apresentada. Desde a 6.2, o canal fornece
+apresentação com evidência de entrega/leitura ou resposta correlacionada ao
+aceite conhecido; na ausência disso, fornece `null`. Pedido explícito de handoff continua funcionando sem
 lead, inclusive com contingência após falha de redação; não confirma nem altera
 por si só a ação pendente. Nenhum contrato HTTP público ganhou esse campo.
 
-Outbox/`/reenviar`, correlação de entrega e janela geral (6.x) permanecem pendentes.
-O envio ainda é aguardado pela fila do vínculo;
-a separação para permitir correções durante envio lento pertence à 6.1.
-Não há retry automático, evidência de entrega ou recuperação após reinício.
+Outbox/`/reenviar`, correlação de entrega e janela estão implementados nas
+seções 6.x. A fila de I/O permite processar correções durante envio lento.
+Não há retry automático nem recuperação após reinício.
 
 ## Referências privadas — task 5.1
 
@@ -447,9 +524,8 @@ confirmação. O retorno contém apenas o alvo original, sem consultar modelo,
 reconstruir argumentos, executar escrita ou exigir que a ação seja a pending atual.
 Lifecycle, revisão e recibos continuam sob autoridade do serviço compartilhado.
 
-Esta etapa disponibiliza o registro e sua resolução isolada. A publicação após
-commit é conectada na 5.2; construir/validar o comando e chamar `confirmAction`
-a partir do clique pertence à 5.3.
+O registro é publicado após commit conforme a 5.2; construir/validar o comando
+e chamar `confirmAction` a partir do clique está conectado conforme a 5.3.
 
 `whatsapp-confirmation-references.test.ts` cobre geração, cópias defensivas,
 aceites identificáveis, correlação exata, isolamento, título sem autoridade,
@@ -507,14 +583,20 @@ repositories reais e transporte simulado. Cobre cadastro created/updated/existin
 reserva created/existing, disputa atômica de vaga com Promises controladas,
 isolamento, correção antes do clique e recibos históricos com/sem pending atual.
 Falhas de redação/envio preservam o recibo salvo antes da apresentação; outro
-clique recupera esse recibo sem nova escrita ou modelo. Isso não implementa
-outbox, `/reenviar`, status de entrega ou a janela geral das tasks 6.x.
+clique recupera esse recibo sem nova escrita ou modelo. Outbox, `/reenviar`,
+status de entrega e janela têm suas próprias suítes descritas nas seções 6.x.
 
 ## Verificação local
 
 O [registro da task 7.2](verification.md) reúne ambiente, contagens da seleção
 focada, auditoria de isolamento/segredos e a falha de subprocesso no sandbox.
 As validações globais e a marcação final dessa task cabem ao processo pai do SDD Agent.
+
+Para a 7.3, [whatsapp-manual-harness.test.ts](../../../test/whatsapp-manual-harness.test.ts)
+exercita o roteiro do harness com webhook assinado, aplicação/repositories reais
+e fetch simulado. Cobre opt-in, configuração privada, relógios independentes,
+confirmações, correções, disputa entre participantes, recuperação e logs sem
+dados sensíveis. Não abre sockets externos, lê credenciais ou homologa a Meta.
 
 ### Logs e exposição — implementação da task 2.4
 

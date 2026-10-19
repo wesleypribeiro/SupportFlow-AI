@@ -1,4 +1,8 @@
-# Exposição HTTPS restrita ao webhook — task 2.4
+# Exposição HTTPS restrita ao webhook
+
+Para configuração do canal, harness com ScriptedChatModel e checklist do número
+de teste, siga o [guia manual](manual.md). A execução Meta pertence à task 7.4,
+separada da entrega documental da 7.3.
 
 [nginx.conf](nginx.conf) é uma configuração **completa de uma instância dedicada**
 de Nginx com suporte SSL. Não depende da configuração global de sites. A API
@@ -18,9 +22,9 @@ O limite de corpo é 1 MiB. O proxy preserva bytes do corpo e
 `X-Hub-Signature-256`; a API continua responsável por HMAC, token e projeção.
 Não há retries automáticos no proxy. Authorization, Cookie e X-Request-ID do
 visitante não são encaminhados. Isso não introduz autenticação nem modifica os
-contratos web. `WHATSAPP_DEMO_RECIPIENTS` continua obrigatório ao habilitar o
-canal, mas a aplicação dessa allowlist aos eventos pertence às próximas tasks.
-Este estágio ainda não é uma demonstração conversacional utilizável.
+contratos web. `WHATSAPP_DEMO_RECIPIENTS` é obrigatório ao habilitar o canal;
+remetentes não listados recebem ACK sem processamento ou resposta. O canal já
+reutiliza o motor conversacional, com memória volátil e uma única instância.
 
 ## Logs
 
@@ -107,8 +111,9 @@ O teste confirmou a preservação das requisições GET/POST, o bloqueio de 30
 acessos não autorizados, o retorno HTTP 502 diante da indisponibilidade do
 upstream e a sanitização dos logs.
 
-Resultado:`Proxy HTTPS validado: GET/POST preservados, 30 acessos negados, falha 502 e logs sanitizados.`
-Nenhuma aprovação dessa validação é alegada.
+Resultado registrado naquela execução: `Proxy HTTPS validado: GET/POST preservados, 30 acessos negados, falha 502 e logs sanitizados.`
+Esse registro local não constitui validação da superfície pública de um novo
+túnel nem homologação Meta; repita as verificações no ambiente do ensaio.
 
 Referências primárias consultadas em 2026-10-05: [location e URI normalizada](https://nginx.org/en/docs/http/ngx_http_core_module.html#location),
 [proxy_pass e preservação da URI](https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_pass),
