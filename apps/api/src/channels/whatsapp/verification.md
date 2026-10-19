@@ -1,10 +1,10 @@
 # Verificação técnica — whatsapp-channel-mvp, task 7.2
 
-**Data:** 19/10/2026, America/Sao_Paulo.  
-**Base auditada:** `5bf10ed`, working tree inicialmente limpo.  
-**Estado:** implementação e auditoria local registradas; validação global e
-marcação da task reservadas ao processo pai do SDD Agent. A task **não está
-concluída** neste registro.
+**Data:** 19/10/2026, America/Sao_Paulo.
+**Base auditada:** `5bf10ed`, working tree inicialmente limpo.
+**Estado:** task 7.2 concluída, com validações globais aprovadas no CI e
+validação OpenSpec estrita aprovada localmente. Este ajuste documental registra
+os resultados informados na revisão; não reexecuta esses comandos.
 
 Escopo autorizado: somente 7.2, conforme proposal, design, tasks, seis delta
 specs e seis specs consolidadas locais. Foram acrescentados três casos de
@@ -18,7 +18,7 @@ As tasks 7.3/7.4 não foram iniciadas; não houve commit, push, merge, rebase ou
 | --- | --- |
 | Sistema | Fedora Linux 43 Workstation, Linux x86_64 |
 | Node.js / npm | `v24.21.0` / `11.19.0`; atendem aos engines do repositório |
-| OpenSpec | `1.13.1`, schema `spec-driven`, change `ready`, 19/22 tasks marcadas |
+| OpenSpec | `1.13.1`, schema `spec-driven`; na inspeção inicial, change `ready` e 19/22 tasks marcadas |
 | TypeScript / Vitest / ESLint | `5.9.3` / `5.0.1` / `9.39.5` |
 | Fastify / Next.js / React / Zod | `5.12.5` / `16.3.5` / `19.3.0` / `4.6.5` |
 | LangChain | `@langchain/core` `1.2.12`; `@langchain/openai` `1.5.13` |
@@ -62,8 +62,10 @@ A única falha foi em `whatsapp-config.test.ts`, caso
 o `spawnSync` retornou `EPERM` ao iniciar Node com `--import tsx src/main.ts`.
 Um subprocesso mínimo, fora do Vitest e sem `unshare`, também retornou
 `error.code: EPERM` com `spawnSync(process.execPath, ['-e', 'process.exit(0)'])`.
-Isso evidencia uma limitação deste ambiente; o teste permanece intacto e precisa
-passar no processo pai. Não foi removido, ignorado ou convertido em sucesso.
+Isso evidencia uma limitação do sandbox focado; o teste permanece intacto.
+Não foi removido, ignorado ou convertido em sucesso nessa execução. Essa
+limitação não representa falha da suíte global: o `npm test` completo passou
+posteriormente no CI, com 1.646 testes aprovados em 60 arquivos.
 
 Outras verificações locais:
 
@@ -73,30 +75,29 @@ Outras verificações locais:
   ambiente mínimo e namespace sem rede: código 0; **60 arquivos descobertos**
   (53 API, 3 contratos, 4 web). Coleta não executa casos e não fornece aqui uma
   contagem global de testes aprovados.
-- `git diff --check`: código 0.
+- `git diff --check`: aprovado após a correção documental, código 0, sem saída.
 
 Os JSONs em `/tmp` são evidências temporárias. As contagens e a falha relevantes
 estão preservadas neste documento, sem incorporar logs brutos ao repositório.
 
-## Validação global reservada ao processo pai
+## Validação global
 
-Por instrução explícita desta execução, os comandos abaixo **não foram
-executados integralmente pelo Codex**. Não se reutilizam resultados históricos
-de outras tasks como aprovação da 7.2.
+Resultados efetivamente obtidos e informados na revisão da task 7.2. Os checks
+globais foram aprovados no CI; a validação OpenSpec foi executada localmente.
+Esses resultados complementam a execução focada no sandbox descrita acima.
 
-| Comando na raiz | Resultado global nesta execução |
+| Comando / job | Resultado registrado |
 | --- | --- |
-| `npm test` | Pendente do processo pai; total global aprovado ainda não aferido |
-| `npm run typecheck` | Pendente do processo pai |
-| `npm run lint` | Pendente do processo pai; o lint focado acima não o substitui |
-| `npm run build` | Pendente do processo pai; o pretest não compila API/web |
-| `openspec validate whatsapp-channel-mvp --strict` | Pendente do processo pai; status/instructions não substituem validação |
-| `git diff --check` | Aprovado localmente; o processo pai fará a conferência final |
+| `npm test` | Aprovado no CI: 60 arquivos de teste e 1.646 testes aprovados |
+| `npm run typecheck` | Aprovado no CI |
+| `npm run lint` | Aprovado no CI |
+| `npm run build` | Aprovado no CI |
+| `openspec validate whatsapp-channel-mvp --strict` | Executado localmente e aprovado: `Change 'whatsapp-channel-mvp' is valid` |
+| Job `proxy` | Aprovado no CI |
+| `git diff --check` | Aprovado após a correção documental, código 0, sem saída |
 
-A conclusão exige registrar a execução externa com data/ambiente, código de
-saída de cada comando, arquivos/casos aprovados e falhas, inclusive o teste de
-startup. A checkbox da 7.2 permanece aberta. Este relatório não antecipa a
-aprovação do processo pai.
+A task 7.2 está concluída. Esta correção altera somente o relatório, sem modificar
+checkboxes de tasks ou antecipar as tasks 7.3/7.4.
 
 ## Ausência de serviços reais
 
@@ -125,7 +126,7 @@ pela auditoria. A inspeção da suíte confirma as seguintes fronteiras:
   Os testes de jornada/SDK verificam que o fetch externo não foi chamado.
 
 Nenhuma chamada real/paga à Meta, OpenAI, LangSmith, banco ou calendário ocorreu
-na seleção executada. A suíte global ainda será executada pelo processo pai.
+na seleção executada. A suíte global foi aprovada no CI, conforme registrado acima.
 Não houve homologação com conta/número Meta, túnel ou modelo real.
 
 ## Auditoria de isolamento e segredos
@@ -138,8 +139,8 @@ Não houve homologação com conta/número Meta, túnel ou modelo real.
 | Web e contratos | Teste de fronteiras inclui `next.config.ts`: sem imports da API, acesso a env ou nomes de configuração Meta/WhatsApp. Nenhum contrato HTTP ou teste web/SDK foi alterado. |
 | Identidade e consentimento | Testes de vínculo/referências, inbox, execução e jornada passaram: troca de conta/número/remetente/referência/messageId recusada; perfil não preenche cadastro; sessões web separadas; título/“sim” não autorizam escrita. |
 | Concorrência e recibos | Serviço, serialização, outbox, status e jornada passaram: ordem por conversa, independência entre remetentes, reserva atômica, recibos históricos e reenvio sem nova escrita. |
-| Logs e erros | 17 testes com Pino real passaram: query, tokens, headers, corpo, contatos, referências, stack/cause e requestId externo não são publicados. Os 97 testes do cliente Cloud API também passaram. A prova de logs do subprocesso de startup permanece pendente por EPERM. |
-| Exposição | Inspeção de `deploy/whatsapp/nginx.conf`: GET/POST no caminho exato do webhook, outros caminhos negados, logs limitados e upstream local. O verificador Nginx e a superfície HTTPS externa não foram executados nesta task; evidência histórica da 2.4 não equivale a nova homologação. |
+| Logs e erros | 17 testes com Pino real passaram: query, tokens, headers, corpo, contatos, referências, stack/cause e requestId externo não são publicados. Os 97 testes do cliente Cloud API também passaram. O EPERM do subprocesso de startup ficou restrito à execução focada no sandbox; a suíte global completa passou no CI. |
+| Exposição | Inspeção de `deploy/whatsapp/nginx.conf`: GET/POST no caminho exato do webhook, outros caminhos negados, logs limitados e upstream local. O job `proxy` foi aprovado no CI. Isso não equivale à homologação da superfície HTTPS externa, não realizada nesta auditoria. |
 
 Varredura local do conteúdo de **183 arquivos textuais rastreados**, sem ler
 arquivos de ambiente sensíveis, não encontrou padrões reconhecíveis de chaves
@@ -153,14 +154,16 @@ Isso é uma varredura por padrões, não uma prova universal de ausência de seg
 Os **11 assets públicos já existentes** em `apps/web/.next/static` foram
 inspecionados por nomes de configuração de provedores, sentinelas fictícias,
 classes de repositories e os padrões de segredos acima, sem ocorrências.
-São artefatos anteriores: **não representam um build novo da 7.2**. A auditoria
-do bundle recém-gerado deverá acompanhar o build externo, sem credenciais reais.
+São artefatos anteriores: **não representam o bundle do build da 7.2 aprovado
+no CI**. Não há registro de uma varredura adicional do bundle gerado nesse build.
 
 `openspec/` continua ignorado pela regra local, inclusive `tasks.md`, apesar das
 exceções posteriores no `.gitignore`. Seus artefatos foram respeitados como
 autoridade e não foram alterados. Este registro fica junto do canal para ser
 versionável sem modificar a política de ignore ou o histórico OpenSpec.
 
-**Limites pendentes:** EPERM do teste de startup, validações globais e inspeção
-do novo bundle no processo pai. As verificações locais não autorizam operação
-comercial nem substituem as tasks futuras de documentação e homologação manual.
+**Limites do registro:** o EPERM permanece documentado como restrição do sandbox
+focado, sem invalidar a aprovação global no CI. A inspeção de assets descrita
+acima não cobre o bundle recém-gerado no CI. `git diff --check`: aprovado após
+a correção documental, código 0, sem saída. A auditoria não autoriza operação comercial nem
+substitui as tasks futuras de documentação e homologação manual.
